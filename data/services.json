@@ -1,0 +1,17 @@
+[
+  {
+    "id": "taglio",
+    "name": "Taglio",
+    "price": 20
+  },
+  {
+    "id": "barba",
+    "name": "Barba",
+    "price": 15
+  },
+  {
+    "id": "taglio_barba",
+    "name": "Taglio + Barba",
+    "price": 30
+  }
+]
