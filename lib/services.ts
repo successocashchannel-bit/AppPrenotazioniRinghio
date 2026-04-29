@@ -9,9 +9,9 @@ export type ServiceItem = {
 };
 
 export const DEFAULT_SERVICES: Record<string, ServiceItem> = {
-  barba: { id: "barba", name: "Barba", durationMin: 15, price: 10, active: true },
-  taglio: { id: "taglio", name: "Taglio", durationMin: 30, price: 20, active: true },
-  barba_taglio: { id: "barba_taglio", name: "Taglio + Barba", durationMin: 45, price: 30, active: true },
+  servizio_1: { id: "servizio_1", name: "Servizio 1", durationMin: 30, price: 20, active: true },
+  servizio_2: { id: "servizio_2", name: "Servizio 2", durationMin: 45, price: 30, active: true },
+  servizio_3: { id: "servizio_3", name: "Servizio 3", durationMin: 60, price: 40, active: true },
 };
 
 type ServiceRow = {
@@ -157,7 +157,7 @@ async function findBookingReferences(serviceId: string) {
 
 export async function deleteService(serviceId: string) {
   const id = String(serviceId || "").trim().toLowerCase();
-  if (!id) throw new Error("ID servizio mancante");
+  if (!id) throw new Error("Servizio mancante");
 
   const all = await readServicesList(true);
   if ((all || []).length <= 1) {

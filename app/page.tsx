@@ -284,7 +284,7 @@ export default function HomePage() {
     }
   }
 
-  const title = settings?.brandTitle?.trim() || "Ringhio BarberShop";
+  const title = settings?.brandTitle?.trim() || "Prenotazioni Online";
   const subtitle =
     settings?.brandSubtitle?.trim() || "Prenota il tuo appuntamento in pochi secondi";
   const brandedLogoUrl = withVersion(settings?.logoUrl, settingsVersion);

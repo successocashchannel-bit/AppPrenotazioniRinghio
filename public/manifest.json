@@ -1,7 +1,7 @@
 {
-  "name": "Ringhio BarberShop",
-  "short_name": "Ringhio",
-  "description": "Prenota il tuo appuntamento da Ringhio BarberShop",
+  "name": "Prenotazioni Online",
+  "short_name": "Prenota",
+  "description": "Prenota il tuo appuntamento da Prenotazioni Online",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0F0F0F",

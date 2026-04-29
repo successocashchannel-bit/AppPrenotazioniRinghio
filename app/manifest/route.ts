@@ -5,7 +5,7 @@ import { NextResponse } from "next/server";
 import { readBusinessSettings } from "@/lib/business-settings";
 
 export async function GET() {
-  let title = "Ringhio BarberShop";
+  let title = "Prenotazioni Online";
   let subtitle = "Prenota il tuo appuntamento in pochi secondi";
 
   try {
@@ -17,7 +17,7 @@ export async function GET() {
   return NextResponse.json(
     {
       name: title,
-      short_name: title.slice(0, 12) || "Ringhio",
+      short_name: title.slice(0, 12) || "Prenota",
       description: subtitle,
       start_url: "/",
       display: "standalone",

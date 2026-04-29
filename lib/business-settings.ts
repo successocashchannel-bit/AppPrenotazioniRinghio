@@ -36,7 +36,7 @@ export const DEFAULT_SETTINGS: BusinessSettings = {
   logoUrl: "",
   icon192: "",
   icon512: "",
-  brandTitle: "Ringhio BarberShop",
+  brandTitle: "Prenotazioni Online",
   brandSubtitle: "Prenota il tuo appuntamento in pochi secondi",
 };
 

@@ -15,7 +15,7 @@ create table if not exists public.business_settings (
   logo_url text not null default '',
   icon_192 text not null default '',
   icon_512 text not null default '',
-  brand_title text not null default 'Ringhio BarberShop',
+  brand_title text not null default 'Prenotazioni Online',
   brand_subtitle text not null default 'Prenota il tuo appuntamento in pochi secondi',
   updated_at timestamptz not null default now()
 );
@@ -116,7 +116,7 @@ values (
   '',
   '',
   '',
-  'Ringhio BarberShop',
+  'Prenotazioni Online',
   'Prenota il tuo appuntamento in pochi secondi'
 )
 on conflict (id) do update set
@@ -139,9 +139,9 @@ on conflict (id) do update set
 
 insert into public.services (id, name, duration_min, price, active, sort_order)
 values
-  ('barba', 'Barba', 15, 10, true, 1),
-  ('taglio', 'Taglio', 30, 20, true, 2),
-  ('barba_taglio', 'Taglio + Barba', 45, 30, true, 3)
+  ('servizio_1', 'Servizio 1', 30, 20, true, 1),
+  ('servizio_2', 'Servizio 2', 45, 30, true, 2),
+  ('servizio_3', 'Servizio 3', 60, 40, true, 3)
 on conflict (id) do update set
   name = excluded.name,
   duration_min = excluded.duration_min,
