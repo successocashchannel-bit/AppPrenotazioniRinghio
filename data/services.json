@@ -1,17 +1,23 @@
-[
-  {
-    "id": "taglio",
-    "name": "Taglio",
-    "price": 20
-  },
-  {
+{
+  "barba": {
     "id": "barba",
     "name": "Barba",
-    "price": 15
+    "durationMin": 15,
+    "price": 5,
+    "active": true
   },
-  {
-    "id": "taglio_barba",
+  "taglio": {
+    "id": "taglio",
+    "name": "Taglio",
+    "durationMin": 30,
+    "price": 10,
+    "active": true
+  },
+  "barba_taglio": {
+    "id": "barba_taglio",
     "name": "Taglio + Barba",
-    "price": 30
+    "durationMin": 45,
+    "price": 15,
+    "active": true
   }
-]
+}

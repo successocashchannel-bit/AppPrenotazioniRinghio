@@ -1,17 +1,20 @@
 
-BARBERSHOP ULTRA PRO BOOKING APP
+VERSIONE VERCEL PERFETTA
 
-Funzioni:
-- Prenotazioni online
-- Orari automatici
-- Blocco orari occupati
-- Dashboard admin
-- Servizi con prezzi
-- Link WhatsApp clienti
+STEP:
 
-Deploy su Vercel:
-1. Estrai lo ZIP
-2. Vai su https://vercel.com
-3. New Project
-4. Carica la cartella
-5. Deploy
+1. Supabase:
+- crea bucket "logos" pubblico
+
+2. ENV:
+NEXT_PUBLIC_SUPABASE_URL=
+SUPABASE_SERVICE_ROLE_KEY=
+
+3. NON serve logo upload stabile per Vercel
+
+4. Copia file dentro progetto
+
+RISULTATO:
+- upload logo funzionante
+- PWA compatibile Vercel
+- nessun errore build
