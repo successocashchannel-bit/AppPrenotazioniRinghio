@@ -1,4 +1,4 @@
-# Setup SQL App Prenotazioni - Versione DB Only
+# Setup SQL Barber App - Versione DB Only
 
 1. Crea un progetto su Supabase.
 2. Apri SQL Editor e incolla il contenuto di `supabase/schema.sql`.

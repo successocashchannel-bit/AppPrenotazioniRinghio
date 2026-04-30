@@ -1,23 +1,23 @@
 {
-  "servizio_1": {
-    "id": "servizio_1",
-    "name": "Servizio 1",
+  "barba": {
+    "id": "barba",
+    "name": "Barba",
+    "durationMin": 15,
+    "price": 5,
+    "active": true
+  },
+  "taglio": {
+    "id": "taglio",
+    "name": "Taglio",
     "durationMin": 30,
-    "price": 20,
+    "price": 10,
     "active": true
   },
-  "servizio_2": {
-    "id": "servizio_2",
-    "name": "Servizio 2",
+  "barba_taglio": {
+    "id": "barba_taglio",
+    "name": "Taglio + Barba",
     "durationMin": 45,
-    "price": 30,
-    "active": true
-  },
-  "servizio_3": {
-    "id": "servizio_3",
-    "name": "Servizio 3",
-    "durationMin": 60,
-    "price": 40,
+    "price": 15,
     "active": true
   }
 }

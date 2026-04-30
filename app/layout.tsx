@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export async function generateMetadata(): Promise<Metadata> {
-  let title = "Prenotazioni Online";
+  let title = "Ringhio BarberShop";
   let description = "Prenota il tuo appuntamento";
 
   try {

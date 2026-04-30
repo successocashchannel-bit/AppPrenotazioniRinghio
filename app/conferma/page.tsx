@@ -77,7 +77,7 @@ export default async function Page({ searchParams }: { searchParams: any }) {
   const name = searchParams?.name || "";
   const durationMin = Number(searchParams?.durationMin || 0) || 30;
 
-  const calendarTitle = `${service || "Appuntamento"} - Prenotazioni Online`;
+  const calendarTitle = `${service || "Appuntamento"} - Ringhio BarberShop`;
   const calendarDescription = [
     "Promemoria appuntamento",
     name ? `Cliente: ${name}` : "",
@@ -106,7 +106,7 @@ export default async function Page({ searchParams }: { searchParams: any }) {
             width={120}
             height={120}
             style={{ width: 120, height: 120, objectFit: "contain", margin: "0 auto" }}
-            alt="Prenotazioni Online"
+            alt="Ringhio BarberShop"
           />
 
           <div>

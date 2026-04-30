@@ -39,7 +39,7 @@ export async function DELETE(req: Request) {
       } catch {}
     }
 
-    if (!id) return NextResponse.json({ error: "Servizio mancante" }, { status: 400 });
+    if (!id) return NextResponse.json({ error: "ID servizio mancante" }, { status: 400 });
     const result = await deleteService(id);
     const services = await readServicesList(true);
     return NextResponse.json({ ok: true, services, result });
