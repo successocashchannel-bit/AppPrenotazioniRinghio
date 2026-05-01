@@ -233,7 +233,7 @@ const selectedService = useMemo(
         service: selectedService?.name || "Servizio",        date,
         time: selected,
         name: peopleCount > 1 ? `${name.trim()} + gruppo` : name.trim(),
-        durationMin: String(selectedService?.durationMin || 0),
+        durationMin: String((selectedService?.durationMin || 0) * peopleCount),
       });
 
       router.push(`/conferma?${params.toString()}`);

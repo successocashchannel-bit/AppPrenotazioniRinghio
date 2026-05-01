@@ -209,24 +209,22 @@ async function collaboratorIsFreeFromContext(
 async function getAvailableCollaboratorsFromContext(
   ctx: AvailabilityContext,
   time: string,
-  preferredCollaboratorId?: string | null
+  preferredCollaboratorId?: string | null,
+  durationOverrideMin?: number
 ) {
   const normalizedPreferred = normalizeId(preferredCollaboratorId);
-  const cacheKey = `${time}__${normalizedPreferred || "all"}`;
+  const durationMin = Math.max(
+    5,
+    Number(durationOverrideMin || ctx.serviceDuration) || ctx.serviceDuration
+  );
+  const cacheKey = `${time}__${normalizedPreferred || "all"}__${durationMin}`;
 
   const cached = ctx.availabilityCache.get(cacheKey);
   if (cached) {
     return cached;
   }
 
-  if (
-    !fitsInsideWorkingWindows(
-      ctx.date,
-      time,
-      ctx.serviceDuration,
-      ctx.settings
-    )
-  ) {
+  if (!fitsInsideWorkingWindows(ctx.date, time, durationMin, ctx.settings)) {
     ctx.availabilityCache.set(cacheKey, []);
     return [];
   }
@@ -236,11 +234,7 @@ async function getAvailableCollaboratorsFromContext(
     return [];
   }
 
-  const { startISO, endISO } = buildSlotInterval(
-    ctx.date,
-    time,
-    ctx.serviceDuration
-  );
+  const { startISO, endISO } = buildSlotInterval(ctx.date, time, durationMin);
 
   const orderedCollaborators = normalizedPreferred
     ? [
@@ -251,14 +245,7 @@ async function getAvailableCollaboratorsFromContext(
 
   const availability = await Promise.all(
     orderedCollaborators.map(async (collaborator) => {
-      if (
-        !collaboratorCanWork(
-          collaborator,
-          ctx.date,
-          time,
-          ctx.serviceDuration
-        )
-      ) {
+      if (!collaboratorCanWork(collaborator, ctx.date, time, durationMin)) {
         return null;
       }
 
@@ -494,7 +481,7 @@ export async function buildGroupBookingPlan(args: {
   ignoreMinAdvance?: boolean;
   ctx?: AvailabilityContext;
 }) {
-  const peopleCount = 1;
+  const peopleCount = Math.max(1, Math.min(5, Number(args.peopleCount || 1) || 1));
   const preferredCollaboratorId = normalizeId(args.preferredCollaboratorId);
   const ctx =
     args.ctx ||
@@ -505,60 +492,39 @@ export async function buildGroupBookingPlan(args: {
       ignoreMinAdvance: Boolean((args as any).ignoreMinAdvance),
     }));
 
-  if (peopleCount === 1) {
-    const available = await getAvailableCollaboratorsFromContext(
-      ctx,
-      args.startTime,
-      preferredCollaboratorId || null
-    );
-
-    const collaborator = preferredCollaboratorId
-      ? available.find((item) => item.id === preferredCollaboratorId) || null
-      : available[0] || null;
-
-    if (!collaborator) {
-      return null;
-    }
-
-    const { startISO, endISO } = buildSlotInterval(
-      args.date,
-      args.startTime,
-      ctx.serviceDuration
-    );
-
-    return {
-      settings: ctx.settings,
-      plan: [
-        {
-          time: args.startTime,
-          collaborator,
-          startISO,
-          endISO,
-        },
-      ] as PlannedBooking[],
-    };
-  }
-
-  if (preferredCollaboratorId) {
-    return buildSingleCollaboratorSequentialPlan({
-      date: args.date,
-      serviceId: args.serviceId,
-      peopleCount,
-      preferredCollaboratorId,
-      startTime: args.startTime,
-      ctx,
-      ignoreMinAdvance: args.ignoreMinAdvance,
-    });
-  }
-
-  return buildAutomaticPlan({
-    date: args.date,
-    serviceId: args.serviceId,
-    peopleCount,
-    startTime: args.startTime,
+  const totalDurationMin = ctx.serviceDuration * peopleCount;
+  const available = await getAvailableCollaboratorsFromContext(
     ctx,
-    ignoreMinAdvance: args.ignoreMinAdvance,
-  });
+    args.startTime,
+    preferredCollaboratorId || null,
+    totalDurationMin
+  );
+
+  const collaborator = preferredCollaboratorId
+    ? available.find((item) => item.id === preferredCollaboratorId) || null
+    : available[0] || null;
+
+  if (!collaborator) {
+    return null;
+  }
+
+  const { startISO, endISO } = buildSlotInterval(
+    args.date,
+    args.startTime,
+    totalDurationMin
+  );
+
+  return {
+    settings: ctx.settings,
+    plan: [
+      {
+        time: args.startTime,
+        collaborator,
+        startISO,
+        endISO,
+      },
+    ] as PlannedBooking[],
+  };
 }
 
 export async function getAvailableGroupSlots(args: {
@@ -569,7 +535,7 @@ export async function getAvailableGroupSlots(args: {
   ignoreMinAdvance?: boolean;
 }) {
   const serviceId = normalizeId(args.serviceId);
-  const peopleCount = 1;
+  const peopleCount = Math.max(1, Math.min(5, Number(args.peopleCount || 1) || 1));
   const preferredCollaboratorId = normalizeId(args.preferredCollaboratorId);
 
   const cacheKey = buildSlotsCacheKey({
@@ -616,7 +582,7 @@ export async function getAvailableGroupSlots(args: {
         ignoreMinAdvance: args.ignoreMinAdvance,
       });
 
-      if (!planned || planned.plan.length < peopleCount) {
+      if (!planned || planned.plan.length < 1) {
         continue;
       }
 
@@ -733,11 +699,14 @@ export async function createSingleBooking(args: {
     throw new Error(`Collaboratore non valido: ${args.collaboratorId}`);
   }
 
+  const peopleCount = Math.max(1, Math.min(5, Number(args.peopleCount || 1) || 1));
+  const totalDurationMin = service.durationMin * peopleCount;
+
   if (
     !fitsInsideWorkingWindows(
       args.date,
       args.time,
-      service.durationMin,
+      totalDurationMin,
       settings
     )
   ) {
@@ -749,7 +718,7 @@ export async function createSingleBooking(args: {
       collaborator,
       args.date,
       args.time,
-      service.durationMin
+      totalDurationMin
     )
   ) {
     throw new Error(
@@ -773,13 +742,14 @@ export async function createSingleBooking(args: {
   const { start, end, startISO, endISO } = buildSlotInterval(
     args.date,
     args.time,
-    ctx.serviceDuration
+    totalDurationMin
   );
 
   const availableCollaborators = await getAvailableCollaboratorsFromContext(
     ctx,
     args.time,
-    collaborator.id
+    collaborator.id,
+    totalDurationMin
   );
 
   if (!availableCollaborators.some((item) => item.id === collaborator.id)) {
@@ -790,7 +760,6 @@ export async function createSingleBooking(args: {
 
   const eventId = `db_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
   const calendarId = getCollaboratorCalendarId(collaborator) || collaborator.id;
-  const peopleCount = Math.max(1, Math.min(5, Number(args.peopleCount || 1) || 1));
 
   await createAppointmentRecord({
     eventId,
@@ -802,7 +771,7 @@ export async function createSingleBooking(args: {
     collaboratorId: collaborator.id,
     collaboratorName: collaborator.name,
     notes: String(args.notes || "").trim(),
-    price: service.price,
+    price: service.price * peopleCount,
     date: args.date,
     time: args.time,
     startISO,
