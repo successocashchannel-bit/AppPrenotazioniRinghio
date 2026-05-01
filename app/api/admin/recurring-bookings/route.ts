@@ -19,7 +19,6 @@ export async function POST(req: Request) {
       customerName,
       phone,
       serviceId,
-      collaboratorId,
       startDate,
       time,
       notes,
@@ -29,7 +28,7 @@ export async function POST(req: Request) {
       occurrenceMode,
     } = body ?? {};
 
-    if (!customerName || !phone || !serviceId || !collaboratorId || !startDate || !time) {
+    if (!customerName || !phone || !serviceId || !startDate || !time) {
       return NextResponse.json({ error: "Dati mancanti per la ricorrenza" }, { status: 400 });
     }
 
@@ -53,14 +52,13 @@ export async function POST(req: Request) {
     const normalizedCustomerName = String(customerName).trim();
     const normalizedPhone = String(phone).trim();
     const normalizedServiceId = String(serviceId).trim().toLowerCase();
-    const normalizedCollaboratorId = String(collaboratorId).trim().toLowerCase();
+    const normalizedCollaboratorId = "";
     const normalizedNotes = String(notes || "").trim();
 
     const recurringRule = await createRecurringRule({
       customerName: normalizedCustomerName,
       phone: normalizedPhone,
       serviceId: normalizedServiceId,
-      collaboratorId: normalizedCollaboratorId,
       startDate: String(startDate),
       time: String(time),
       every: repeatEvery,
@@ -84,7 +82,6 @@ export async function POST(req: Request) {
           date: currentDate,
           time: String(time),
           serviceId: normalizedServiceId,
-          collaboratorId: normalizedCollaboratorId,
           notes: normalizedNotes,
           recurrenceLabel,
           recurringRuleId,
@@ -93,7 +90,7 @@ export async function POST(req: Request) {
         created.push({
           eventId: booking.eventId,
           date: currentDate,
-          collaboratorName: booking.collaborator.name,
+          collaboratorName: "",
         });
       } catch (error: any) {
         skipped.push({

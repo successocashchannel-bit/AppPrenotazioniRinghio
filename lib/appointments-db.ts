@@ -9,8 +9,8 @@ export type AppointmentRecordInput = {
   phone: string;
   serviceId: string;
   serviceName: string;
-  collaboratorId: string;
-  collaboratorName: string;
+  collaboratorId?: string;
+  collaboratorName?: string;
   notes?: string;
   price?: number;
   date: string;
@@ -231,8 +231,8 @@ function inputToRow(input: AppointmentRecordInput) {
     service_id: String(input.serviceId || "").trim(),
     service_name: String(input.serviceName || "").trim(),
 
-    collaborator_id: String(input.collaboratorId || "").trim(),
-    collaborator_name: String(input.collaboratorName || "").trim(),
+    collaborator_id: String(input.collaboratorId || "").trim() || null,
+    collaborator_name: String(input.collaboratorName || "").trim() || null,
 
     notes: String(input.notes || "").trim() || null,
     price: Number(input.price || 0),

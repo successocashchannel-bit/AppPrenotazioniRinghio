@@ -6,7 +6,7 @@ export type RecurringRuleRecord = {
   customerName: string;
   phone: string;
   serviceId: string;
-  collaboratorId: string;
+  collaboratorId?: string;
   startDate: string;
   time: string;
   every: number;
@@ -43,7 +43,7 @@ function buildRow(record: RecurringRuleRecord, mode: "modern" | "legacy" | "hybr
     customer_name: record.customerName,
     phone: record.phone,
     service_id: record.serviceId,
-    collaborator_id: record.collaboratorId,
+    collaborator_id: String(record.collaboratorId || "").trim() || null,
     start_date: record.startDate,
     time: record.time,
     every: record.every,

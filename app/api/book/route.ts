@@ -14,8 +14,6 @@ export async function POST(req: Request) {
       date,
       time,
       serviceId,
-      collaboratorId,
-      preferredCollaboratorId,
       notes,
       peopleCount,
       customerNames,
@@ -25,12 +23,6 @@ export async function POST(req: Request) {
     if (!name || !phone || !date || !time || !serviceId) {
       return NextResponse.json({ error: "Dati mancanti" }, { status: 400 });
     }
-
-    const normalizedPreferredCollaboratorId = String(
-      preferredCollaboratorId || collaboratorId || ""
-    )
-      .trim()
-      .toLowerCase();
 
     const totalPeople = Math.max(1, Math.min(5, Number(peopleCount || 1) || 1));
     const bypassMinAdvance = Boolean(adminBypassMinAdvance);
@@ -52,18 +44,12 @@ export async function POST(req: Request) {
       startTime: String(time),
       serviceId: String(serviceId).trim().toLowerCase(),
       peopleCount: totalPeople,
-      preferredCollaboratorId: normalizedPreferredCollaboratorId || null,
       ignoreMinAdvance: bypassMinAdvance,
     });
 
     if (!planned || planned.plan.length < 1) {
       return NextResponse.json(
-        {
-          error:
-            normalizedPreferredCollaboratorId
-              ? "Non ci sono abbastanza slot consecutivi disponibili per il collaboratore selezionato"
-              : "Non ci sono abbastanza slot disponibili per questa prenotazione di gruppo",
-        },
+        { error: "Non ci sono abbastanza slot disponibili per questa prenotazione di gruppo" },
         { status: 409 }
       );
     }
@@ -73,14 +59,11 @@ export async function POST(req: Request) {
 
     const created: Array<{
       eventId: string;
-      collaboratorId: string;
-      collaboratorName: string;
       customerName: string;
       time: string;
     }> = [];
 
-    const assignment = planned.plan[0];
-    let currentTime = assignment.time;
+    let currentTime = planned.plan[0].time;
 
     for (let index = 0; index < totalPeople; index += 1) {
       const bookingName = attendeeNames[index] || `${String(name).trim()} (${index + 1})`;
@@ -91,7 +74,6 @@ export async function POST(req: Request) {
         date: String(date),
         time: currentTime,
         serviceId: String(serviceId).trim().toLowerCase(),
-        collaboratorId: assignment.collaborator.id,
         notes: String(notes || "").trim(),
         groupLabel,
         peopleCount: 1,
@@ -100,8 +82,6 @@ export async function POST(req: Request) {
 
       created.push({
         eventId: booking.eventId,
-        collaboratorId: assignment.collaborator.id,
-        collaboratorName: assignment.collaborator.name,
         customerName: bookingName,
         time: currentTime,
       });
@@ -115,7 +95,6 @@ export async function POST(req: Request) {
       bookingIds: created.map((item) => item.eventId),
       bookings: created,
       peopleCount: totalPeople,
-      preferredCollaboratorId: normalizedPreferredCollaboratorId,
     });
   } catch (error: any) {
     console.error("Booking error in /api/book:", {

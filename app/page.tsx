@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 type Service = { id: string; name: string; durationMin: number; price: number; active: boolean };
-type Collaborator = { id: string; name: string; active: boolean; calendarId?: string };
 
 type Settings = {
   slotIntervalMin: 15 | 30;
@@ -22,8 +21,6 @@ type Settings = {
 type SlotsResponse = {
   date: string;
   serviceId: string;
-  collaboratorId?: string;
-  preferredCollaboratorId?: string;
   peopleCount: number;
   slots: string[];
   settings?: Settings;
@@ -34,7 +31,7 @@ type CachedSlotsState = { slots: string[]; settings: Settings | null };
 type BookResponse = {
   bookingId?: string;
   peopleCount?: number;
-  bookings?: Array<{ collaboratorName: string; customerName: string }>;
+  bookings?: Array<{ customerName: string }>;
 };
 
 function todayISO() {
@@ -68,10 +65,7 @@ export default function HomePage() {
   const router = useRouter();
   const [services, setServices] = useState<Service[]>([]);
   const [servicesLoading, setServicesLoading] = useState(true);
-  const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
-  const [collaboratorsLoading, setCollaboratorsLoading] = useState(true);
   const [serviceId, setServiceId] = useState("");
-  const [preferredCollaboratorId, setPreferredCollaboratorId] = useState("");
   const [date, setDate] = useState(todayISO());
   const [peopleCount, setPeopleCount] = useState(1);
   const [slots, setSlots] = useState<string[]>([]);
@@ -90,24 +84,15 @@ export default function HomePage() {
   useEffect(() => {
     async function loadInitialData() {
       try {
-        const [servicesRes, collaboratorsRes] = await Promise.all([
-          fetch("/api/public/services"),
-          fetch("/api/public/collaborators"),
-        ]);
-
+        const servicesRes = await fetch("/api/public/services");
         const servicesData = await safeJson<{ ok: boolean; services: Service[] }>(servicesRes);
-        const collaboratorsData = await safeJson<{ ok: boolean; collaborators: Collaborator[] }>(collaboratorsRes);
 
-        const loadedCollaborators = collaboratorsData.collaborators || [];
         setServices(servicesData.services || []);
-        setCollaborators(loadedCollaborators);
-        setPreferredCollaboratorId((prev) => prev || loadedCollaborators[0]?.id || "");
         setServiceId((prev) => prev || servicesData.services?.[0]?.id || "");
       } catch (e: any) {
         setMessage(e?.message || "Errore caricamento dati iniziali");
       } finally {
         setServicesLoading(false);
-        setCollaboratorsLoading(false);
       }
     }
 
@@ -119,10 +104,6 @@ export default function HomePage() {
     [services, serviceId]
   );
 
-  const preferredCollaborator = useMemo(
-    () => collaborators.find((c) => c.id === preferredCollaboratorId) || null,
-    [collaborators, preferredCollaboratorId]
-  );
 
   const parsedGroupNames = useMemo(
     () => groupNamesText.split("\n").map((item) => item.trim()).filter(Boolean),
@@ -177,7 +158,7 @@ export default function HomePage() {
     return () => {
       if (slotsDebounceRef.current) clearTimeout(slotsDebounceRef.current);
     };
-  }, [date, serviceId, preferredCollaboratorId, peopleCount]);
+  }, [date, serviceId, peopleCount]);
 
 const selectedService = useMemo(
   () => services.find((s) => s.id === serviceId) || null,
@@ -223,11 +204,6 @@ const selectedService = useMemo(
         }),
       }).then(safeJson<BookResponse>);
 
-      const collaboratorSummary =
-        data.bookings
-          ?.map((item) => `${item.customerName}: ${item.collaboratorName}`)
-          .join(" | ") ||
-        "Operatore";
 
       const params = new URLSearchParams({
         service: selectedService?.name || "Servizio",        date,

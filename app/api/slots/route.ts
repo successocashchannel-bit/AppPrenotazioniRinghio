@@ -3,7 +3,6 @@ export const revalidate = 0;
 
 import { NextResponse } from "next/server";
 import { getServiceById } from "@/lib/services";
-import { getCollaboratorById } from "@/lib/collaborators";
 import {
   readBusinessSettings,
   isClosedDate,
@@ -17,10 +16,6 @@ export async function GET(req: Request) {
 
     const date = String(searchParams.get("date") || "").trim();
     const rawServiceId = String(searchParams.get("serviceId") || "").trim();
-    const rawCollaboratorId = String(searchParams.get("collaboratorId") || "").trim();
-    const rawPreferredCollaboratorId = String(
-      searchParams.get("preferredCollaboratorId") || ""
-    ).trim();
     const adminBypassMinAdvance = ["1", "true", "yes"].includes(
       String(searchParams.get("adminBypassMinAdvance") || "").trim().toLowerCase()
     );
@@ -35,17 +30,10 @@ export async function GET(req: Request) {
     }
 
     const serviceId = rawServiceId.toLowerCase();
-    const collaboratorId = rawCollaboratorId.toLowerCase();
-    const preferredCollaboratorId = String(
-      rawPreferredCollaboratorId || collaboratorId || ""
-    )
-      .trim()
-      .toLowerCase();
 
-    const [service, settings, collaborator] = await Promise.all([
+    const [service, settings] = await Promise.all([
       getServiceById(serviceId),
       readBusinessSettings(),
-      collaboratorId ? getCollaboratorById(collaboratorId) : Promise.resolve(null),
     ]);
 
     if (!service || !service.active) {
@@ -55,19 +43,10 @@ export async function GET(req: Request) {
       );
     }
 
-    if (collaboratorId && (!collaborator || !collaborator.active)) {
-      return NextResponse.json(
-        { error: `Collaboratore non valido: ${rawCollaboratorId}` },
-        { status: 400 }
-      );
-    }
-
     if (isClosedDate(date, settings)) {
       return NextResponse.json({
         date,
         serviceId,
-        collaboratorId,
-        preferredCollaboratorId,
         peopleCount,
         slots: [],
         slotsDetailed: [],
@@ -81,15 +60,12 @@ export async function GET(req: Request) {
       date,
       serviceId,
       peopleCount,
-      preferredCollaboratorId: preferredCollaboratorId || null,
       ignoreMinAdvance: adminBypassMinAdvance,
     });
 
     return NextResponse.json({
       date,
       serviceId,
-      collaboratorId,
-      preferredCollaboratorId,
       peopleCount,
       slots: result.slots.map((slot) => slot.time),
       slotsDetailed: result.slots,
@@ -97,7 +73,7 @@ export async function GET(req: Request) {
       settings: serializeBusinessSettings(result.settings),
     });
   } catch (error: any) {
-    console.error("Collaborator slots error in /api/slots:", {
+    console.error("Slots error in /api/slots:", {
       message: error?.message,
       stack: error?.stack,
       response: error?.response?.data,
