@@ -3,6 +3,7 @@ export const revalidate = 0;
 
 import { NextResponse } from "next/server";
 import { buildGroupBookingPlan, createSingleBooking } from "@/lib/booking-engine";
+import { addMinutesToHHMM } from "@/lib/business-settings";
 
 export async function POST(req: Request) {
   try {
@@ -79,28 +80,34 @@ export async function POST(req: Request) {
     }> = [];
 
     const assignment = planned.plan[0];
-    const bookingName = totalPeople > 1 ? attendeeNames.join(", ") : attendeeNames[0];
+    let currentTime = assignment.time;
 
-    const booking = await createSingleBooking({
-      name: bookingName,
-      phone: String(phone).trim(),
-      date: String(date),
-      time: assignment.time,
-      serviceId: String(serviceId).trim().toLowerCase(),
-      collaboratorId: assignment.collaborator.id,
-      notes: String(notes || "").trim(),
-      groupLabel,
-      peopleCount: totalPeople,
-      ignoreMinAdvance: bypassMinAdvance,
-    });
+    for (let index = 0; index < totalPeople; index += 1) {
+      const bookingName = attendeeNames[index] || `${String(name).trim()} (${index + 1})`;
 
-    created.push({
-      eventId: booking.eventId,
-      collaboratorId: assignment.collaborator.id,
-      collaboratorName: assignment.collaborator.name,
-      customerName: bookingName,
-      time: assignment.time,
-    });
+      const booking = await createSingleBooking({
+        name: bookingName,
+        phone: String(phone).trim(),
+        date: String(date),
+        time: currentTime,
+        serviceId: String(serviceId).trim().toLowerCase(),
+        collaboratorId: assignment.collaborator.id,
+        notes: String(notes || "").trim(),
+        groupLabel,
+        peopleCount: 1,
+        ignoreMinAdvance: bypassMinAdvance,
+      });
+
+      created.push({
+        eventId: booking.eventId,
+        collaboratorId: assignment.collaborator.id,
+        collaboratorName: assignment.collaborator.name,
+        customerName: bookingName,
+        time: currentTime,
+      });
+
+      currentTime = addMinutesToHHMM(currentTime, booking.service.durationMin);
+    }
 
     return NextResponse.json({
       success: true,

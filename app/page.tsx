@@ -202,8 +202,8 @@ const selectedService = useMemo(
       return;
     }
 
-    if (peopleCount > 1 && parsedGroupNames.length === 0) {
-      setMessage("Per una prenotazione di gruppo inserisci almeno un nome per persona, uno per riga.");
+    if (peopleCount > 1 && parsedGroupNames.length < peopleCount) {
+      setMessage(`Inserisci  nomi, uno per ogni persona.`);
       return;
     }
 
@@ -338,9 +338,6 @@ const selectedService = useMemo(
           </button>
 
           <div className="badge info">Orari: {hoursLabel(settings)}</div>
-          <div className="badge info">
-            Gestionale configurato per 1 solo operatore.
-          </div>
         </div>
       </section>
     </main>
