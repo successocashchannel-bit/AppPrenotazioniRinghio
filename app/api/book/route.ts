@@ -31,7 +31,7 @@ export async function POST(req: Request) {
       .trim()
       .toLowerCase();
 
-    const totalPeople = 1;
+    const totalPeople = Math.max(1, Math.min(5, Number(peopleCount || 1) || 1));
     const bypassMinAdvance = Boolean(adminBypassMinAdvance);
 
     const namesFromList = Array.isArray(customerNames)

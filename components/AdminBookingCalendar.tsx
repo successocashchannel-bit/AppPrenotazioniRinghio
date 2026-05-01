@@ -226,7 +226,7 @@ export default function AdminBookingCalendar({
         <div>
           <label>Numero persone</label>
           <select value={peopleCount} onChange={(e) => setPeopleCount(Number(e.target.value) || 1)}>
-            {[1].map((n) => (
+            {[1, 2, 3, 4, 5].map((n) => (
               <option key={n} value={n}>
                 {n} {n === 1 ? "persona" : "persone"}
               </option>
