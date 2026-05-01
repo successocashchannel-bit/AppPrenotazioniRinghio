@@ -2,6 +2,7 @@ import { DateTime } from "luxon";
 import { getServiceById } from "@/lib/services";
 import { supabaseDelete, supabaseInsert, supabasePatch, supabaseSelect } from "@/lib/supabase-rest";
 import { TIME_ZONE } from "@/lib/business-settings";
+import { getSalonId } from "@/lib/salon";
 import { createBookingEvent, deleteBookingEvent } from "@/lib/googleCalendar";
 
 export type BookingItem = {
@@ -39,6 +40,7 @@ type BookingRow = {
   status: string;
   summary: string | null;
   google_event_id: string | null;
+  salon_id?: string | null;
 };
 
 function normalizePhone(phone: string) {
@@ -76,11 +78,12 @@ function rowToBooking(row: BookingRow): BookingItem {
   };
 }
 
-const BOOKING_SELECT = "id,customer_name,phone,booking_date,booking_time,start_at,end_at,service_id,service_name,price,notes,status,summary,google_event_id";
+const BOOKING_SELECT = "id,salon_id,customer_name,phone,booking_date,booking_time,start_at,end_at,service_id,service_name,price,notes,status,summary,google_event_id";
 
 export async function listBookings(fromISO: string, toISO: string) {
   const rows = await supabaseSelect<BookingRow[]>("bookings", {
     select: BOOKING_SELECT,
+    salon_id: `eq.${getSalonId()}`,
     start_at: `gte.${fromISO}`,
     end_at: `lt.${toISO}`,
     status: "neq.cancelled",
@@ -92,6 +95,7 @@ export async function listBookings(fromISO: string, toISO: string) {
 export async function listBookingsForDate(date: string) {
   const rows = await supabaseSelect<BookingRow[]>("bookings", {
     select: BOOKING_SELECT,
+    salon_id: `eq.${getSalonId()}`,
     booking_date: `eq.${date}`,
     status: "neq.cancelled",
     order: "start_at.asc",
@@ -102,6 +106,7 @@ export async function listBookingsForDate(date: string) {
 export async function getBookingById(id: string) {
   const rows = await supabaseSelect<BookingRow[]>("bookings", {
     select: BOOKING_SELECT,
+    salon_id: `eq.${getSalonId()}`,
     id: `eq.${id}`,
     limit: 1,
   });
@@ -148,6 +153,7 @@ export async function createBooking(input: {
   });
 
   const rows = await supabaseInsert<BookingRow[]>("bookings", {
+    salon_id: getSalonId(),
     customer_name: input.name,
     phone: input.phone,
     booking_date: input.date,
@@ -181,7 +187,7 @@ export async function markBookingCancelled(id: string) {
 
   const rows = await supabasePatch<BookingRow[]>(
     "bookings",
-    { id },
+    { id, salon_id: getSalonId() },
     { status: "cancelled", google_event_id: null }
   );
 
@@ -199,6 +205,6 @@ export async function hardDeleteBooking(id: string) {
   if (booking?.googleEventId) {
     await deleteBookingEvent(booking.googleEventId);
   }
-  await supabaseDelete("bookings", { id });
+  await supabaseDelete("bookings", { id, salon_id: getSalonId() });
   return booking;
 }
