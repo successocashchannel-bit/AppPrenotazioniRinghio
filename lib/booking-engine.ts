@@ -714,6 +714,7 @@ export async function createSingleBooking(args: {
   recurrenceLabel?: string;
   recurringRuleId?: string;
   ignoreMinAdvance?: boolean;
+  peopleCount?: number;
 }) {
   const serviceId = normalizeId(args.serviceId);
   const collaboratorId = normalizeId(args.collaboratorId);
@@ -789,9 +790,7 @@ export async function createSingleBooking(args: {
 
   const eventId = `db_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
   const calendarId = getCollaboratorCalendarId(collaborator) || collaborator.id;
-  const peopleCount = args.groupLabel
-    ? Math.max(2, String(args.groupLabel).split(",").length)
-    : 1;
+  const peopleCount = Math.max(1, Math.min(5, Number(args.peopleCount || 1) || 1));
 
   await createAppointmentRecord({
     eventId,

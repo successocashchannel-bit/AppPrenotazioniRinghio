@@ -55,7 +55,7 @@ export async function POST(req: Request) {
       ignoreMinAdvance: bypassMinAdvance,
     });
 
-    if (!planned || planned.plan.length < totalPeople) {
+    if (!planned || planned.plan.length < 1) {
       return NextResponse.json(
         {
           error:
@@ -78,29 +78,29 @@ export async function POST(req: Request) {
       time: string;
     }> = [];
 
-    for (let index = 0; index < totalPeople; index += 1) {
-      const assignment = planned.plan[index];
+    const assignment = planned.plan[0];
+    const bookingName = totalPeople > 1 ? attendeeNames.join(", ") : attendeeNames[0];
 
-      const booking = await createSingleBooking({
-        name: attendeeNames[index],
-        phone: String(phone).trim(),
-        date: String(date),
-        time: assignment.time,
-        serviceId: String(serviceId).trim().toLowerCase(),
-        collaboratorId: assignment.collaborator.id,
-        notes: String(notes || "").trim(),
-        groupLabel,
-        ignoreMinAdvance: bypassMinAdvance,
-      });
+    const booking = await createSingleBooking({
+      name: bookingName,
+      phone: String(phone).trim(),
+      date: String(date),
+      time: assignment.time,
+      serviceId: String(serviceId).trim().toLowerCase(),
+      collaboratorId: assignment.collaborator.id,
+      notes: String(notes || "").trim(),
+      groupLabel,
+      peopleCount: totalPeople,
+      ignoreMinAdvance: bypassMinAdvance,
+    });
 
-      created.push({
-        eventId: booking.eventId,
-        collaboratorId: assignment.collaborator.id,
-        collaboratorName: assignment.collaborator.name,
-        customerName: attendeeNames[index],
-        time: assignment.time,
-      });
-    }
+    created.push({
+      eventId: booking.eventId,
+      collaboratorId: assignment.collaborator.id,
+      collaboratorName: assignment.collaborator.name,
+      customerName: bookingName,
+      time: assignment.time,
+    });
 
     return NextResponse.json({
       success: true,
