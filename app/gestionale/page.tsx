@@ -166,7 +166,7 @@ export default function GestionalePage() {
   const [loginError, setLoginError] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
 
-  const [tab, setTab] = useState<"dashboard" | "calendario" | "clienti" | "storico" | "servizi" | "collaboratori" | "impostazioni">("calendario");
+  const [tab, setTab] = useState<"dashboard" | "calendario" | "clienti" | "storico" | "servizi" | "impostazioni">("calendario");
   const [date, setDate] = useState(todayISO());
   const [range, setRange] = useState<"day" | "week" | "month">("day");
   const [loading, setLoading] = useState(true);
@@ -519,7 +519,7 @@ export default function GestionalePage() {
       const res = await fetch("/api/admin/recurring-bookings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(recurringForm),
+        body: JSON.stringify({ ...recurringForm, collaboratorId: recurringForm.collaboratorId || collaborators[0]?.id || "" }),
       });
       const data = await safeJson<{ ok: boolean; createdCount: number; skippedCount: number }>(res);
       setRecurringMessage(`Ricorrenza creata. Appuntamenti creati: ${data.createdCount}. Saltati: ${data.skippedCount}.`);
@@ -891,7 +891,6 @@ const calendarGroupNames = useMemo(
                     ["clienti", "Clienti"],
                     ["storico", "Storico"],
                     ["servizi", "Servizi & Prezzi"],
-                    ["collaboratori", "Collaboratori"],
                     ["impostazioni", "Impostazioni"],
                   ].map(([value, label]) => (
                     <button
@@ -916,7 +915,7 @@ const calendarGroupNames = useMemo(
       <section className="card" style={{ marginBottom: 18 }}>
         <div className="tabRow" style={{ justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
           <div className="badge info">
-            Sezione attiva: {tab === "calendario" ? "Calendario" : tab === "dashboard" ? "Dashboard" : tab === "clienti" ? "Clienti" : tab === "storico" ? "Storico" : tab === "servizi" ? "Servizi & Prezzi" : tab === "collaboratori" ? "Collaboratori" : "Impostazioni"}
+            Sezione attiva: {tab === "calendario" ? "Calendario" : tab === "dashboard" ? "Dashboard" : tab === "clienti" ? "Clienti" : tab === "storico" ? "Storico" : tab === "servizi" ? "Servizi & Prezzi" : "Impostazioni"}
           </div>
           
         </div>
@@ -945,41 +944,16 @@ const calendarGroupNames = useMemo(
             <div className="statBox"><strong>{filteredStats.totalAppointments}</strong><span>Appuntamenti</span></div>
             <div className="statBox"><strong>€{filteredStats.totalRevenue}</strong><span>Incasso stimato</span></div>
             <div className="statBox"><strong>{filteredStats.uniqueClients}</strong><span>Clienti unici</span></div>
-            <div className="statBox"><strong>{filteredStats.activeCollaborators}</strong><span>Collaboratori attivi</span></div>
           </section>
 
           <section className="card">
             <div className="grid">
               <div className="sectionTitle">Dashboard</div>
-              <div className="badge info">Filtra gli appuntamenti per collaboratore oppure visualizza tutto insieme.</div>
-
-              <div className="dashboardFilterRow">
-                <button
-                  type="button"
-                  className={`collabFilterBtn ${dashboardCollaboratorFilter === "all" ? "activeCollabFilter" : ""}`}
-                  onClick={() => setDashboardCollaboratorFilter("all")}
-                >
-                  Tutti gli appuntamenti
-                </button>
-                {collaborators.filter((c) => c.active).map((collaborator, index) => (
-                  <button
-                    key={collaborator.id}
-                    type="button"
-                    className={`collabFilterBtn ${dashboardCollaboratorFilter === collaborator.id ? "activeCollabFilter" : ""}`}
-                    onClick={() => setDashboardCollaboratorFilter(collaborator.id)}
-                    style={{ borderColor: collaboratorColor(collaborator, index), boxShadow: dashboardCollaboratorFilter === collaborator.id ? `0 0 0 2px ${collaboratorColor(collaborator, index)}33 inset` : undefined }}
-                  >
-                    <span className="collabDot" style={{ background: collaboratorColor(collaborator, index) }} />
-                    {collaborator.name}
-                  </button>
-                ))}
-              </div>
-
               {message && <div className="badge error">{message}</div>}
               {loading ? (
                 <div className="badge info">Caricamento appuntamenti...</div>
               ) : filteredDashboardBookings.length === 0 ? (
-                <div className="badge info">Nessun appuntamento trovato per il filtro selezionato.</div>
+                <div className="badge info">Nessun appuntamento trovato.</div>
               ) : (
                 <div style={{ display: "grid", gap: 10 }}>
                   {filteredDashboardBookings.map((item) => (
@@ -1000,7 +974,7 @@ const calendarGroupNames = useMemo(
 
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 3 }}>{item.customerName}</div>
-                          <div className="muted" style={{ fontSize: 12 }}>{item.serviceName} · €{item.price} · {item.collaboratorName || "—"}</div>
+                          <div className="muted" style={{ fontSize: 12 }}>{item.serviceName} · €{item.price}</div>
                           <div className="muted" style={{ fontSize: 12 }}>{item.phone || "Telefono non disponibile"}</div>
                         </div>
 
@@ -1051,13 +1025,6 @@ const calendarGroupNames = useMemo(
                   <select value={recurringForm.serviceId} onChange={(e) => setRecurringForm({ ...recurringForm, serviceId: e.target.value })}>
                     <option value="">Seleziona servizio</option>
                     {services.map((service) => <option key={service.id} value={service.id}>{service.name}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label>Collaboratore</label>
-                  <select value={recurringForm.collaboratorId} onChange={(e) => setRecurringForm({ ...recurringForm, collaboratorId: e.target.value })}>
-                    <option value="">Seleziona collaboratore</option>
-                    {collaborators.map((collaborator) => <option key={collaborator.id} value={collaborator.id}>{collaborator.name}</option>)}
                   </select>
                 </div>
                 <div>
@@ -1198,7 +1165,6 @@ const calendarGroupNames = useMemo(
                                   <div>
                                     <strong>{item.serviceName}</strong>
                                     <div className="muted">{item.dateLabel} · {item.startLabel} - {item.endLabel}</div>
-                                    <div className="muted">Collaboratore: {item.collaboratorName || "—"}</div>
                                   </div>
                                   <div style={{ textAlign: "right" }}>
                                     <strong>€{item.price}</strong>
@@ -1260,83 +1226,7 @@ const calendarGroupNames = useMemo(
         </section>
       )}
 
-      {tab === "collaboratori" && (
-        <section className="card">
-          <div className="grid">
-            <div className="sectionTitle">Collaboratori</div>
-            
-            {collaboratorsMessage && <div className={`badge ${collaboratorsMessage.includes("successo") ? "ok" : "error"}`}>{collaboratorsMessage}</div>}
-            <div className="gridTwoCols">
-              <div>
-                <label>ID collaboratore (facoltativo)</label>
-                <input value={collaboratorForm.id} onChange={(e) => setCollaboratorForm({ ...collaboratorForm, id: e.target.value })} placeholder="es. marco" />
-              </div>
-              <div>
-                <label>Nome operatore</label>
-                <input value={collaboratorForm.name} onChange={(e) => setCollaboratorForm({ ...collaboratorForm, name: e.target.value })} placeholder="es. Marco" />
-              </div>
-              <label className="switchRow fullRow"><input type="checkbox" checked={collaboratorForm.active} onChange={(e) => setCollaboratorForm({ ...collaboratorForm, active: e.target.checked })} /> Operatore attivo nell'app prenotazioni</label>
-            </div>
 
-            <div className="sectionTitle">Giorni fissi di riposo dell'operatore</div>
-            <div className="checkboxGrid">
-              {WEEKDAYS.map((day) => (
-                <label key={day.value} className="checkCard">
-                  <input type="checkbox" checked={collaboratorForm.weeklyOffDays.includes(day.value)} onChange={() => toggleCollaboratorWeekday(day.value)} /> {day.label}
-                </label>
-              ))}
-            </div>
-
-            <div className="sectionTitle">Orari personalizzati operatore</div>
-            <label className="switchRow"><input type="checkbox" checked={collaboratorForm.morningEnabled} onChange={(e) => setCollaboratorForm({ ...collaboratorForm, morningEnabled: e.target.checked })} /> Attiva fascia mattina</label>
-            <div className="gridTwoCols">
-              <div><label>Apertura mattina</label><input type="time" value={collaboratorForm.morningOpen} onChange={(e) => setCollaboratorForm({ ...collaboratorForm, morningOpen: e.target.value })} /></div>
-              <div><label>Chiusura mattina</label><input type="time" value={collaboratorForm.morningClose} onChange={(e) => setCollaboratorForm({ ...collaboratorForm, morningClose: e.target.value })} /></div>
-            </div>
-            <label className="switchRow"><input type="checkbox" checked={collaboratorForm.afternoonEnabled} onChange={(e) => setCollaboratorForm({ ...collaboratorForm, afternoonEnabled: e.target.checked })} /> Attiva fascia pomeriggio</label>
-            <div className="gridTwoCols">
-              <div><label>Apertura pomeriggio</label><input type="time" value={collaboratorForm.afternoonOpen} onChange={(e) => setCollaboratorForm({ ...collaboratorForm, afternoonOpen: e.target.value })} /></div>
-              <div><label>Chiusura pomeriggio</label><input type="time" value={collaboratorForm.afternoonClose} onChange={(e) => setCollaboratorForm({ ...collaboratorForm, afternoonClose: e.target.value })} /></div>
-            </div>
-
-            <div className="sectionTitle">Ferie / assenze dell'operatore</div>
-            <div className="holidayRow">
-              <div><label>Nuova data ferie</label><input type="date" value={newCollaboratorHoliday} onChange={(e) => setNewCollaboratorHoliday(e.target.value)} /></div>
-              <button className="btn" onClick={addCollaboratorHoliday}>Aggiungi</button>
-            </div>
-            <div className="holidayList">
-              {collaboratorForm.holidays.length === 0 ? <div className="badge info">Nessuna ferie/assenza impostata.</div> : collaboratorForm.holidays.map((holiday) => (
-                <div key={holiday} className="holidayItem">
-                  <strong>{holiday}</strong>
-                  <button className="miniDangerBtn" onClick={() => setCollaboratorForm({ ...collaboratorForm, holidays: collaboratorForm.holidays.filter((d) => d !== holiday) })}>Rimuovi</button>
-                </div>
-              ))}
-            </div>
-
-            <div className="bookingActions">
-              <button className="btn" onClick={saveCollaborator} disabled={savingCollaborator || !collaboratorForm.id}>{savingCollaborator ? "Salvo..." : "Salva operatore"}</button>
-              <button className="tabBtn secondaryBtn" disabled>Gestionale 1 operatore</button>
-            </div>
-
-            <div className="sectionTitle">Operatore</div>
-            {collaboratorsLoading ? <div className="badge info">Caricamento collaboratori...</div> : collaborators.map((collaborator) => (
-              <div key={collaborator.id} className="holidayItem">
-                <div>
-                  <strong>{collaborator.name}</strong>
-                  <div className="muted">Riposo settimanale: {collaborator.weeklyOffDays.length ? WEEKDAYS.filter((day) => collaborator.weeklyOffDays.includes(day.value)).map((day) => day.label).join(", ") : "nessuno"}</div>
-                  <div className="muted">Ferie impostate: {collaborator.holidays.length}</div>
-                  <div className="muted">Mattina: {collaborator.morningEnabled ? `${collaborator.morningOpen}-${collaborator.morningClose}` : "off"} · Pomeriggio: {collaborator.afternoonEnabled ? `${collaborator.afternoonOpen}-${collaborator.afternoonClose}` : "off"}</div>
-                  <div className="muted">{collaborator.active ? "Attivo" : "Disattivato"}</div>
-                </div>
-                <div className="bookingActions">
-                  <button className="tabBtn secondaryBtn" onClick={() => { setCollaboratorForm(collaborator); setNewCollaboratorHoliday(""); }}>Modifica</button>
-                  <button className="tabBtn dangerBtn" onClick={() => removeCollaborator(collaborator.id)} disabled={deletingCollaboratorId === collaborator.id || collaborators.length <= 1}>{deletingCollaboratorId === collaborator.id ? "Elimino..." : "Rimuovi"}</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
 
       {tab === "impostazioni" && (
         <section className="card">

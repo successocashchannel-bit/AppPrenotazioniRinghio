@@ -130,11 +130,6 @@ export default function GestionaleCalendarioPage() {
       adminBypassMinAdvance: "1",
     });
 
-    if (preferredCollaboratorId) {
-      qs.set("preferredCollaboratorId", preferredCollaboratorId);
-      qs.set("collaboratorId", preferredCollaboratorId);
-    }
-
     const requestKey = qs.toString();
     latestSlotsKeyRef.current = requestKey;
     setSelected("");
@@ -246,10 +241,7 @@ export default function GestionaleCalendarioPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          serviceId,
-          preferredCollaboratorId,
-          collaboratorId: preferredCollaboratorId,
-          date,
+          serviceId,          date,
           time: selected,
           name: name.trim(),
           phone: phone.trim(),
@@ -264,12 +256,12 @@ export default function GestionaleCalendarioPage() {
         data.bookings
           ?.map((item) => `${item.customerName}: ${item.collaboratorName}`)
           .join(" | ") ||
-        (preferredCollaborator?.name || collaborators[0]?.name || "Operatore");
+        "Operatore";
 
       setMessage(
         peopleCount > 1
           ? `Prenotazione creata. ${collaboratorSummary}`
-          : `Prenotazione creata con successo. Collaboratore: ${collaboratorSummary}`
+          : `Prenotazione creata con successo. ${collaboratorSummary}`
       );
 
       setSelected("");
@@ -283,11 +275,6 @@ export default function GestionaleCalendarioPage() {
         peopleCount: String(peopleCount),
         adminBypassMinAdvance: "1",
       });
-
-      if (preferredCollaboratorId) {
-        qs.set("preferredCollaboratorId", preferredCollaboratorId);
-        qs.set("collaboratorId", preferredCollaboratorId);
-      }
 
       const requestKey = qs.toString();
       const res = await fetch(`/api/slots?${requestKey}`);
@@ -374,22 +361,6 @@ export default function GestionaleCalendarioPage() {
                 </option>
               ))}
             </select>
-          </div>
-
-          <div>
-            <label>Operatore</label>
-            {collaboratorsLoading ? (
-              <div className="badge info">Caricamento collaboratori...</div>
-            ) : (
-              <select value={preferredCollaboratorId} onChange={(e) => setPreferredCollaboratorId(e.target.value)}>
-                
-                {collaborators.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            )}
           </div>
 
           <div>

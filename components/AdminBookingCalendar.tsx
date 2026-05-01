@@ -113,11 +113,6 @@ export default function AdminBookingCalendar({
       adminBypassMinAdvance: "1",
     });
 
-    if (preferredCollaboratorId) {
-      qs.set("preferredCollaboratorId", preferredCollaboratorId);
-      qs.set("collaboratorId", preferredCollaboratorId);
-    }
-
     const requestKey = qs.toString();
     latestSlotsKeyRef.current = requestKey;
     setSelected("");
@@ -184,10 +179,7 @@ export default function AdminBookingCalendar({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          serviceId,
-          preferredCollaboratorId,
-          collaboratorId: preferredCollaboratorId,
-          date,
+          serviceId,          date,
           time: selected,
           name: name.trim(),
           phone: phone.trim(),
@@ -201,7 +193,7 @@ export default function AdminBookingCalendar({
       const collaboratorSummary =
         data.bookings
           ?.map((item) => `${item.customerName}: ${item.collaboratorName}`)
-          .join(" | ") || (preferredCollaborator?.name || collaborators[0]?.name || "Operatore");
+          .join(" | ") || "Operatore";
 
       setMessage(`Appuntamento creato con successo. ${service?.name || "Servizio"} · ${date} · ${selected} · ${collaboratorSummary}`);
       setName("");
@@ -211,10 +203,6 @@ export default function AdminBookingCalendar({
       onBooked?.();
 
       const qs = new URLSearchParams({ date, serviceId, peopleCount: String(peopleCount), adminBypassMinAdvance: "1" });
-      if (preferredCollaboratorId) {
-        qs.set("preferredCollaboratorId", preferredCollaboratorId);
-        qs.set("collaboratorId", preferredCollaboratorId);
-      }
       const requestKey = qs.toString();
       const res = await fetch(`/api/slots?${requestKey}`);
       const refreshed = await safeJson<SlotsResponse>(res);
@@ -241,18 +229,6 @@ export default function AdminBookingCalendar({
             {[1].map((n) => (
               <option key={n} value={n}>
                 {n} {n === 1 ? "persona" : "persone"}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label>Operatore</label>
-          <select value={preferredCollaboratorId} onChange={(e) => setPreferredCollaboratorId(e.target.value)}>
-            
-            {collaborators.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
               </option>
             ))}
           </select>

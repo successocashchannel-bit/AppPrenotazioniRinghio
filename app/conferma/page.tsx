@@ -70,7 +70,6 @@ export const revalidate = 0;
 
 export default function Page({ searchParams }: { searchParams: any }) {
   const service = searchParams?.service || "";
-  const collaborator = searchParams?.collaborator || "";
   const date = searchParams?.date || "";
   const time = searchParams?.time || "";
   const name = searchParams?.name || "";
@@ -81,7 +80,6 @@ export default function Page({ searchParams }: { searchParams: any }) {
     "Promemoria appuntamento",
     name ? `Cliente: ${name}` : "",
     service ? `Servizio: ${service}` : "",
-    collaborator ? `Collaboratori: ${collaborator}` : "",
     date ? `Data: ${formatDateIT(date)}` : "",
     time ? `Ora: ${time}` : "",
   ]
@@ -111,7 +109,6 @@ export default function Page({ searchParams }: { searchParams: any }) {
 
           <div style={{ background: "#000", padding: 16, borderRadius: 12, textAlign: "left" }}>
             <div style={{ marginBottom: 8 }}><b>Servizio:</b> {service || "-"}</div>
-            <div style={{ marginBottom: 8 }}><b>Collaboratore/i:</b> {collaborator || "Assegnazione automatica"}</div>
             <div style={{ marginBottom: 8 }}><b>Data:</b> {formatDateIT(date || "") || "-"}</div>
             <div style={{ marginBottom: 8 }}><b>Ora:</b> {time || "-"}</div>
             <div><b>Durata:</b> {durationMin} min</div>

@@ -138,11 +138,6 @@ export default function HomePage() {
       peopleCount: String(peopleCount),
     });
 
-    if (preferredCollaboratorId) {
-      qs.set("preferredCollaboratorId", preferredCollaboratorId);
-      qs.set("collaboratorId", preferredCollaboratorId);
-    }
-
     const requestKey = qs.toString();
     latestSlotsKeyRef.current = requestKey;
     setSelected("");
@@ -219,10 +214,7 @@ const selectedService = useMemo(
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          serviceId,
-          preferredCollaboratorId,
-          collaboratorId: preferredCollaboratorId,
-          date,
+          serviceId,          date,
           time: selected,
           name: name.trim(),
           phone: phone.trim(),
@@ -235,12 +227,10 @@ const selectedService = useMemo(
         data.bookings
           ?.map((item) => `${item.customerName}: ${item.collaboratorName}`)
           .join(" | ") ||
-        (preferredCollaborator?.name || collaborators[0]?.name || "Operatore");
+        "Operatore";
 
       const params = new URLSearchParams({
-        service: selectedService?.name || "Servizio",
-        collaborator: collaboratorSummary,
-        date,
+        service: selectedService?.name || "Servizio",        date,
         time: selected,
         name: peopleCount > 1 ? `${name.trim()} + gruppo` : name.trim(),
         durationMin: String(selectedService?.durationMin || 0),
@@ -276,22 +266,6 @@ const selectedService = useMemo(
                 </option>
               ))}
             </select>
-          </div>
-
-          <div>
-            <label>Operatore</label>
-            {collaboratorsLoading ? (
-              <div className="badge info">Caricamento collaboratori...</div>
-            ) : (
-              <select value={preferredCollaboratorId} onChange={(e) => setPreferredCollaboratorId(e.target.value)}>
-                
-                {collaborators.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            )}
           </div>
 
           <div>
