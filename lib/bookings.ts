@@ -2,6 +2,7 @@ import { DateTime } from "luxon";
 import { getServiceById } from "@/lib/services";
 import { supabaseDelete, supabaseInsert, supabasePatch, supabaseSelect } from "@/lib/supabase-rest";
 import { TIME_ZONE } from "@/lib/business-settings";
+import { createBookingEvent, deleteBookingEvent } from "@/lib/googleCalendar";
 
 export type BookingItem = {
   id: string;
@@ -21,8 +22,6 @@ export type BookingItem = {
   bookingDate: string;
   status: string;
   googleEventId: string;
-  recurringSeriesId: string;
-  recurrenceLabel: string;
 };
 
 type BookingRow = {
@@ -40,8 +39,6 @@ type BookingRow = {
   status: string;
   summary: string | null;
   google_event_id: string | null;
-  recurring_series_id: string | null;
-  recurrence_label: string | null;
 };
 
 function normalizePhone(phone: string) {
@@ -58,7 +55,6 @@ function toWhatsappUrl(phone: string) {
 function rowToBooking(row: BookingRow): BookingItem {
   const start = DateTime.fromISO(row.start_at, { zone: TIME_ZONE });
   const end = DateTime.fromISO(row.end_at, { zone: TIME_ZONE });
-
   return {
     id: row.id,
     summary: row.summary || `${row.service_name} - ${row.customer_name}`,
@@ -76,14 +72,11 @@ function rowToBooking(row: BookingRow): BookingItem {
     whatsappUrl: toWhatsappUrl(row.phone),
     bookingDate: row.booking_date,
     status: row.status || "confirmed",
-    googleEventId: "",
-    recurringSeriesId: String(row.recurring_series_id || ""),
-    recurrenceLabel: String(row.recurrence_label || ""),
+    googleEventId: row.google_event_id || "",
   };
 }
 
-const BOOKING_SELECT =
-  "id,customer_name,phone,booking_date,booking_time,start_at,end_at,service_id,service_name,price,notes,status,summary,google_event_id,recurring_series_id,recurrence_label";
+const BOOKING_SELECT = "id,customer_name,phone,booking_date,booking_time,start_at,end_at,service_id,service_name,price,notes,status,summary,google_event_id";
 
 export async function listBookings(fromISO: string, toISO: string) {
   const rows = await supabaseSelect<BookingRow[]>("bookings", {
@@ -122,8 +115,6 @@ export async function createBooking(input: {
   time: string;
   serviceId: string;
   notes?: string;
-  recurringSeriesId?: string;
-  recurrenceLabel?: string;
 }) {
   const service = await getServiceById(input.serviceId);
   if (!service || !service.active) throw new Error("Servizio non valido");
@@ -132,6 +123,29 @@ export async function createBooking(input: {
   const end = start.plus({ minutes: service.durationMin });
   const summary = `${service.name} - ${input.name}`;
   const notes = String(input.notes || "").trim();
+  const description =
+    `Cliente: ${input.name}
+` +
+    `Telefono: ${input.phone}
+` +
+    `Servizio: ${service.name}
+` +
+    `ServiceId: ${service.id}
+` +
+    `Prezzo: €${service.price}
+` +
+    `Data: ${input.date}
+` +
+    `Ora: ${input.time}
+` +
+    `Note: ${notes}`;
+
+  const googleEventId = await createBookingEvent({
+    summary,
+    description,
+    startDateTimeLocal: start.toISO()!,
+    endDateTimeLocal: end.toISO()!,
+  });
 
   const rows = await supabaseInsert<BookingRow[]>("bookings", {
     customer_name: input.name,
@@ -146,9 +160,7 @@ export async function createBooking(input: {
     notes,
     status: "confirmed",
     summary,
-    google_event_id: null,
-    recurring_series_id: input.recurringSeriesId || null,
-    recurrence_label: input.recurrenceLabel || null,
+    google_event_id: googleEventId,
   });
 
   return rowToBooking(rows[0]);
@@ -160,6 +172,11 @@ export async function markBookingCancelled(id: string) {
 
   if (booking.status === "cancelled") {
     return booking;
+  }
+
+  let googleResult: { ok?: boolean; skipped?: boolean; deleted?: boolean; alreadyDeleted?: boolean } | null = null;
+  if (booking.googleEventId) {
+    googleResult = await deleteBookingEvent(booking.googleEventId);
   }
 
   const rows = await supabasePatch<BookingRow[]>(
@@ -179,43 +196,9 @@ export async function markBookingCancelled(id: string) {
 
 export async function hardDeleteBooking(id: string) {
   const booking = await getBookingById(id);
+  if (booking?.googleEventId) {
+    await deleteBookingEvent(booking.googleEventId);
+  }
   await supabaseDelete("bookings", { id });
   return booking;
-}
-
-export async function listBookingsBySeriesId(seriesId: string) {
-  const normalized = String(seriesId || "").trim();
-  if (!normalized) return [];
-  const rows = await supabaseSelect<BookingRow[]>("bookings", {
-    select: BOOKING_SELECT,
-    recurring_series_id: `eq.${normalized}`,
-    order: "start_at.asc",
-  });
-  return rows.map(rowToBooking);
-}
-
-export async function cancelRecurringSeries(seriesId: string) {
-  const normalized = String(seriesId || "").trim();
-  if (!normalized) throw new Error("Serie ricorrente non valida");
-
-  const rows = await supabasePatch<BookingRow[]>(
-    "bookings",
-    { recurring_series_id: normalized },
-    { status: "cancelled", google_event_id: null }
-  );
-
-  return rows.map(rowToBooking);
-}
-
-export async function updateRecurringSeriesNotes(seriesId: string, notes: string) {
-  const normalized = String(seriesId || "").trim();
-  if (!normalized) throw new Error("Serie ricorrente non valida");
-
-  const rows = await supabasePatch<BookingRow[]>(
-    "bookings",
-    { recurring_series_id: normalized },
-    { notes: String(notes || "").trim() }
-  );
-
-  return rows.map(rowToBooking);
 }

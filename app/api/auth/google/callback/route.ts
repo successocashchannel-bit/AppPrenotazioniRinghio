@@ -1,5 +1,8 @@
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 import { NextResponse } from "next/server";
 
 export async function GET() {
-  return NextResponse.json({ ok: false, message: "Callback Google non disponibile." }, { status: 410 });
+  return NextResponse.redirect(new URL("/gestionale?google=disabled", "http://localhost"));
 }

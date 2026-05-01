@@ -1,4 +1,5 @@
-import { supabaseDelete, supabasePatch, supabaseSelect, supabaseUpsert } from "@/lib/supabase-rest";
+import { supabaseAdmin } from "@/lib/supabase-admin";
+import { getSalonId, matchesSalonScopedId, salonScopedId } from "@/lib/salon";
 
 export type ServiceItem = {
   id: string;
@@ -8,24 +9,48 @@ export type ServiceItem = {
   active: boolean;
 };
 
-export const DEFAULT_SERVICES: Record<string, ServiceItem> = {
-  barba: { id: "barba", name: "Barba", durationMin: 15, price: 10, active: true },
-  taglio: { id: "taglio", name: "Taglio", durationMin: 30, price: 20, active: true },
-  barba_taglio: { id: "barba_taglio", name: "Taglio + Barba", durationMin: 45, price: 30, active: true },
-};
-
 type ServiceRow = {
   id: string;
+  salon_id?: string | null;
   name: string;
-  duration_min: number | null;
-  price: number | null;
-  active: boolean | null;
+  duration_min: number;
+  price: number;
+  active: boolean;
+  updated_at?: string;
 };
 
-type BookingRefRow = {
-  id: string;
-  status: string | null;
+const DEFAULT_SERVICE_DEFS: Record<string, Omit<ServiceItem, "id"> & { baseId: string }> = {
+  barba: {
+    baseId: "barba",
+    name: "Barba",
+    durationMin: 15,
+    price: 10,
+    active: true,
+  },
+  taglio: {
+    baseId: "taglio",
+    name: "Taglio",
+    durationMin: 30,
+    price: 15,
+    active: true,
+  },
+  barba_taglio: {
+    baseId: "barba_taglio",
+    name: "Barba + Taglio",
+    durationMin: 45,
+    price: 20,
+    active: true,
+  },
 };
+
+export function getDefaultServices(): Record<string, ServiceItem> {
+  const result: Record<string, ServiceItem> = {};
+  for (const def of Object.values(DEFAULT_SERVICE_DEFS)) {
+    const id = salonScopedId(def.baseId);
+    result[id] = { id, name: def.name, durationMin: def.durationMin, price: def.price, active: def.active };
+  }
+  return result;
+}
 
 function slugify(text: string) {
   return String(text || "")
@@ -38,70 +63,104 @@ function slugify(text: string) {
 }
 
 function sanitizeService(input: Partial<ServiceItem>, fallbackId?: string): ServiceItem {
-  const name = String(input.name || "").trim() || "Nuovo servizio";
+  const name = String(input.name || "").trim() || "Servizio";
   const id = slugify(String(input.id || fallbackId || name)) || `servizio_${Date.now()}`;
-  const durationMin = Math.max(5, Math.min(480, Number(input.durationMin) || 30));
-  const price = Math.max(0, Number(input.price) || 0);
-  const active = input.active !== false;
-  return { id, name, durationMin, price, active };
-}
+  const durationMin = Math.max(5, Number(input.durationMin || 0) || 15);
+  const price = Math.max(0, Number(input.price || 0) || 0);
 
-function rowToService(row: ServiceRow): ServiceItem {
-  return sanitizeService({
-    id: row.id,
-    name: row.name,
-    durationMin: Number(row.duration_min || 30),
-    price: Number(row.price || 0),
-    active: row.active !== false,
-  });
-}
-
-function serviceToRow(input: ServiceItem): ServiceRow {
   return {
-    id: input.id,
-    name: input.name,
-    duration_min: input.durationMin,
-    price: input.price,
-    active: input.active,
+    id,
+    name,
+    durationMin,
+    price,
+    active: input.active !== false,
   };
 }
 
-async function ensureDefaultServicesIfEmpty() {
-  const existing = await supabaseSelect<ServiceRow[]>("services", {
-    select: "id,name,duration_min,price,active",
-    order: "name.asc",
-  });
+function fromRow(row: ServiceRow): ServiceItem {
+  return sanitizeService(
+    {
+      id: row.id,
+      name: row.name,
+      durationMin: row.duration_min,
+      price: row.price,
+      active: row.active,
+    },
+    row.id
+  );
+}
 
-  if ((existing || []).length > 0) return existing;
+function toRow(item: ServiceItem): ServiceRow {
+  return {
+    id: salonScopedId(item.id),
+    salon_id: getSalonId(),
+    name: item.name,
+    duration_min: item.durationMin,
+    price: item.price,
+    active: item.active,
+  };
+}
 
-  const defaults = Object.values(DEFAULT_SERVICES).map((service) => serviceToRow(service));
-  return await supabaseUpsert<ServiceRow[]>("services", defaults, "id");
+function normalizeServices(input: any): Record<string, ServiceItem> {
+  if (!input || typeof input !== "object") return getDefaultServices();
+
+  const result: Record<string, ServiceItem> = {};
+  for (const [key, value] of Object.entries(input)) {
+    const item = sanitizeService(value as Partial<ServiceItem>, key);
+    item.id = salonScopedId(item.id);
+    result[item.id] = item;
+  }
+
+  return Object.keys(result).length ? result : getDefaultServices();
+}
+
+async function seedDefaultServicesIfEmpty() {
+  const { data, error } = await supabaseAdmin.from("services").select("id").eq("salon_id", getSalonId()).limit(1);
+  if (error) throw error;
+
+  if ((data || []).length === 0) {
+    const rows = Object.values(getDefaultServices()).map(toRow);
+    const upsert = await supabaseAdmin.from("services").upsert(rows, { onConflict: "id" });
+    if (upsert.error) throw upsert.error;
+  }
 }
 
 export async function readServicesMap() {
-  try {
-    const rows = await ensureDefaultServicesIfEmpty();
-    const result: Record<string, ServiceItem> = {};
-    for (const row of rows || []) {
-      const item = rowToService(row);
-      result[item.id] = item;
-    }
-    return Object.keys(result).length ? result : { ...DEFAULT_SERVICES };
-  } catch {
-    return { ...DEFAULT_SERVICES };
+  await seedDefaultServicesIfEmpty();
+
+  const { data, error } = await supabaseAdmin.from("services").select("*").eq("salon_id", getSalonId());
+  if (error) throw error;
+
+  const result: Record<string, ServiceItem> = {};
+  for (const row of (data || []) as ServiceRow[]) {
+    const item = fromRow(row);
+    result[item.id] = item;
   }
+
+  return Object.keys(result).length ? result : getDefaultServices();
 }
 
 export async function saveServicesMap(input: Record<string, ServiceItem>) {
-  const items = Object.values(input).map((item) => sanitizeService(item));
-  const rows = items.map((item) => serviceToRow(item));
-  const saved = await supabaseUpsert<ServiceRow[]>("services", rows, "id");
-  const result: Record<string, ServiceItem> = {};
-  for (const row of saved || []) {
-    const item = rowToService(row);
-    result[item.id] = item;
+  const normalized = normalizeServices(input);
+  const rows = Object.values(normalized).map(toRow);
+
+  const existing = await supabaseAdmin.from("services").select("id").eq("salon_id", getSalonId());
+  if (existing.error) throw existing.error;
+
+  const keepIds = new Set(rows.map((item) => item.id));
+  const deleteIds = (existing.data || [])
+    .map((item: any) => item.id)
+    .filter((id: string) => !keepIds.has(id));
+
+  if (deleteIds.length) {
+    const deleted = await supabaseAdmin.from("services").delete().eq("salon_id", getSalonId()).in("id", deleteIds);
+    if (deleted.error) throw deleted.error;
   }
-  return result;
+
+  const upsert = await supabaseAdmin.from("services").upsert(rows, { onConflict: "id" });
+  if (upsert.error) throw upsert.error;
+
+  return normalized;
 }
 
 export async function readServicesList(includeInactive = false) {
@@ -111,94 +170,64 @@ export async function readServicesList(includeInactive = false) {
 }
 
 export async function getServiceById(serviceId: string) {
-  const id = String(serviceId || "").trim().toLowerCase();
-  if (!id) return null;
-  try {
-    const rows = await supabaseSelect<ServiceRow[]>("services", {
-      select: "id,name,duration_min,price,active",
-      id: `eq.${id}`,
-      limit: 1,
-    });
-    const row = rows?.[0];
-    return row ? rowToService(row) : null;
-  } catch {
-    const map = await readServicesMap();
-    return map[id] || null;
-  }
+  const normalizedId = String(serviceId || "").trim().toLowerCase();
+  if (!normalizedId) return null;
+
+  const { data, error } = await supabaseAdmin
+    .from("services")
+    .select("*")
+     .eq("salon_id", getSalonId())
+    .in("id", [normalizedId, salonScopedId(normalizedId)])
+    .limit(1);
+
+  if (error) throw error;
+
+  const rows = (data || []) as ServiceRow[];
+  const row = rows.find((entry) => matchesSalonScopedId(entry.id, normalizedId)) || rows[0];
+  return row ? fromRow(row) : null;
 }
 
 export async function upsertService(input: Partial<ServiceItem>) {
   const item = sanitizeService(input, input.id);
-  const saved = await supabaseUpsert<ServiceRow[]>("services", [serviceToRow(item)], "id");
-  const row = saved?.[0];
-  return row ? rowToService(row) : item;
-}
+  item.id = salonScopedId(item.id);
 
-async function findBookingReferences(serviceId: string) {
-  try {
-    const rows = await supabaseSelect<BookingRefRow[]>("bookings", {
-      select: "id,status",
-      service_id: `eq.${serviceId}`,
-      limit: 500,
-    });
+  const { error } = await supabaseAdmin
+    .from("services")
+    .upsert(toRow(item), { onConflict: "id" });
 
-    const active = (rows || []).filter((row) => String(row.status || "confirmed") !== "cancelled");
-    return {
-      activeCount: active.length,
-      totalCount: (rows || []).length,
-    };
-  } catch {
-    return {
-      activeCount: 0,
-      totalCount: 0,
-    };
-  }
+  if (error) throw error;
+
+  return item;
 }
 
 export async function deleteService(serviceId: string) {
-  const id = String(serviceId || "").trim().toLowerCase();
-  if (!id) throw new Error("ID servizio mancante");
+  const normalizedId = String(serviceId || "").trim().toLowerCase();
+  if (!normalizedId) return;
 
   const all = await readServicesList(true);
-  if ((all || []).length <= 1) {
+  if (all.length <= 1) {
     throw new Error("Deve rimanere almeno un servizio nel sistema");
   }
 
-  const refs = await findBookingReferences(id);
+  const { error } = await supabaseAdmin
+    .from("services")
+    .delete()
+     .eq("salon_id", getSalonId())
+    .in("id", [normalizedId, salonScopedId(normalizedId)]);
 
-  if (refs.activeCount > 0) {
-    await supabasePatch("services", { id }, { active: false });
-    return {
-      deleted: false,
-      deactivated: true,
-      activeReferenced: true,
-      historicalReferenced: refs.totalCount > refs.activeCount,
-    };
+  if (error) throw error;
+}
+
+export async function getServices() {
+  return readServicesList(true);
+}
+
+export async function saveServices(services: ServiceItem[]) {
+  const map: Record<string, ServiceItem> = {};
+  for (const service of services) {
+    const item = sanitizeService(service, service.id);
+    item.id = salonScopedId(item.id);
+    map[item.id] = item;
   }
-
-  try {
-    await supabaseDelete("services", { id });
-    return {
-      deleted: true,
-      deactivated: false,
-      activeReferenced: false,
-      historicalReferenced: refs.totalCount > 0,
-    };
-  } catch (error: any) {
-    const message = String(error?.message || "").toLowerCase();
-    const likelyReferenced =
-      message.includes("foreign key") ||
-      message.includes("violates") ||
-      message.includes("constraint") ||
-      message.includes("bookings") ||
-      message.includes("appointments");
-
-    if (!likelyReferenced) {
-      throw error;
-    }
-
-    throw new Error(
-      "Il servizio è ancora collegato allo storico. Esegui prima il fix SQL con ON DELETE SET NULL per permettere la rimozione definitiva."
-    );
-  }
+  return saveServicesMap(map);
 }

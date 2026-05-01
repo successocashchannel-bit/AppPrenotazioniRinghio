@@ -1,12 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import AdminBookingCalendar from "@/components/AdminBookingCalendar";
 
 type Booking = {
   id: string;
   summary: string;
   serviceId: string;
   serviceName: string;
+  collaboratorId: string;
+  collaboratorName: string;
+  calendarId: string;
   customerName: string;
   phone: string;
   notes: string;
@@ -17,8 +21,8 @@ type Booking = {
   endLabel: string;
   dateLabel: string;
   whatsappUrl: string;
-  recurringSeriesId?: string;
   recurrenceLabel?: string;
+  recurringRuleId?: string;
 };
 
 type BusinessSettings = {
@@ -32,40 +36,58 @@ type BusinessSettings = {
   afternoonEnabled: boolean;
   afternoonOpen: string;
   afternoonClose: string;
-  logoUrl: string;
-  icon192: string;
-  icon512: string;
-  brandTitle: string;
-  brandSubtitle: string;
-  updatedAt?: string;
 };
 
 type Service = { id: string; name: string; durationMin: number; price: number; active: boolean };
+type Collaborator = {
+  id: string;
+  name: string;
+  active: boolean;
+  calendarId?: string;
+  color?: string;
+  weeklyOffDays: number[];
+  holidays: string[];
+  morningEnabled: boolean;
+  morningOpen: string;
+  morningClose: string;
+  afternoonEnabled: boolean;
+  afternoonOpen: string;
+  afternoonClose: string;
+};
 
 type DashboardResponse = { ok: boolean; range: "day" | "week" | "month"; date: string; total: number; bookings: Booking[] };
 
-type AllBookingsResponse = { ok: boolean; range: "month"; date: string; total: number; bookings: Booking[] };
-
-type ManualBookingForm = {
-  name: string;
-  phone: string;
+type SlotsResponse = {
+  date: string;
   serviceId: string;
-  time: string;
-  notes: string;
-  repeatEnabled: boolean;
-  every: number;
-  unit: "days" | "weeks" | "months";
-  occurrences: number;
+  collaboratorId?: string;
+  preferredCollaboratorId?: string;
+  peopleCount: number;
+  slots: string[];
+  settings?: BusinessSettings;
 };
 
-type CustomerHistory = {
-  key: string;
+
+type CachedSlotsState = { slots: string[]; settings: BusinessSettings | null };
+
+type BookResponse = {
+  bookingId?: string;
+  peopleCount?: number;
+  bookings?: Array<{ collaboratorName: string; customerName: string }>;
+};
+
+type RecurringForm = {
   customerName: string;
   phone: string;
-  totalBookings: number;
-  totalSpent: number;
-  whatsappUrl: string;
-  bookings: Booking[];
+  serviceId: string;
+  collaboratorId: string;
+  startDate: string;
+  time: string;
+  every: number;
+  unit: "days" | "weeks" | "months";
+  occurrenceMode: "count" | "forever";
+  occurrences: number;
+  notes: string;
 };
 
 const DEFAULT_SETTINGS: BusinessSettings = {
@@ -79,21 +101,16 @@ const DEFAULT_SETTINGS: BusinessSettings = {
   afternoonEnabled: true,
   afternoonOpen: "15:30",
   afternoonClose: "20:00",
-  logoUrl: "",
-  icon192: "",
-  icon512: "",
-  brandTitle: "Ringhio BarberShop",
-  brandSubtitle: "Prenota il tuo appuntamento in pochi secondi",
 };
 
 const WEEKDAYS = [
+  { value: 0, label: "Domenica" },
   { value: 1, label: "Lunedì" },
   { value: 2, label: "Martedì" },
   { value: 3, label: "Mercoledì" },
   { value: 4, label: "Giovedì" },
   { value: 5, label: "Venerdì" },
   { value: 6, label: "Sabato" },
-  { value: 0, label: "Domenica" },
 ];
 
 function todayISO() {
@@ -109,102 +126,38 @@ async function safeJson<T>(res: Response): Promise<T> {
   return data as T;
 }
 
-function hoursLabel(settings?: BusinessSettings | null) {
-  if (!settings) return "Caricamento orari...";
-  const parts: string[] = [];
-  if (settings.morningEnabled) parts.push(`Mattina ${settings.morningOpen}-${settings.morningClose}`);
-  if (settings.afternoonEnabled) parts.push(`Pomeriggio ${settings.afternoonOpen}-${settings.afternoonClose}`);
-  return parts.join(" · ");
-}
-
 function emptyService(): Service {
   return { id: "", name: "", durationMin: 30, price: 0, active: true };
 }
 
-function emptyManualBooking(defaultServiceId = ""): ManualBookingForm {
+function emptyCollaborator(): Collaborator {
+  return { id: "", name: "", active: true, calendarId: "", color: "", weeklyOffDays: [], holidays: [], morningEnabled: true, morningOpen: "09:00", morningClose: "13:00", afternoonEnabled: true, afternoonOpen: "15:30", afternoonClose: "20:00" };
+}
+
+function emptyRecurring(date = todayISO()): RecurringForm {
   return {
-    name: "",
+    customerName: "",
     phone: "",
-    serviceId: defaultServiceId,
-    time: "",
-    notes: "",
-    repeatEnabled: false,
+    serviceId: "",
+    collaboratorId: "",
+    startDate: date,
+    time: "09:00",
     every: 1,
     unit: "weeks",
+    occurrenceMode: "count",
     occurrences: 4,
+    notes: "",
   };
 }
 
-function addMinutes(time: string, minutes: number) {
-  const [h, m] = String(time || "00:00").split(":").map(Number);
-  const total = (h || 0) * 60 + (m || 0) + minutes;
-  const hh = Math.floor(total / 60);
-  const mm = total % 60;
-  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+const COLLABORATOR_COLORS = ["#2563eb", "#16a34a", "#d97706", "#9333ea", "#dc2626", "#0891b2"];
+
+function collaboratorColor(collaborator: Collaborator | undefined, index = 0) {
+  const raw = String(collaborator?.color || "").trim();
+  if (raw) return raw;
+  return COLLABORATOR_COLORS[index % COLLABORATOR_COLORS.length];
 }
 
-function windowsFromSettings(settings: BusinessSettings) {
-  const items: { key: string; start: string; end: string }[] = [];
-  if (settings.morningEnabled) items.push({ key: "morning", start: settings.morningOpen, end: settings.morningClose });
-  if (settings.afternoonEnabled) items.push({ key: "afternoon", start: settings.afternoonOpen, end: settings.afternoonClose });
-  return items.filter((item) => item.start && item.end && item.end > item.start);
-}
-
-function generateStartSlots(settings: BusinessSettings, durationMin: number) {
-  const slots: string[] = [];
-  const step = Number(settings.slotIntervalMin) || 15;
-
-  for (const window of windowsFromSettings(settings)) {
-    let current = window.start;
-    while (addMinutes(current, durationMin) <= window.end) {
-      slots.push(current);
-      current = addMinutes(current, step);
-    }
-  }
-
-  return Array.from(new Set(slots));
-}
-
-function overlapsRange(startA: string, endA: string, startB: string, endB: string) {
-  return startA < endB && endA > startB;
-}
-
-function isPastSlot(dateISO: string, time: string) {
-  const [year, month, day] = dateISO.split("-").map(Number);
-  const [hour, minute] = time.split(":").map(Number);
-  const slotDate = new Date(year || 0, (month || 1) - 1, day || 1, hour || 0, minute || 0, 0, 0);
-  return slotDate.getTime() <= Date.now();
-}
-
-function getServiceColor(name: string) {
-  const n = String(name || "").toLowerCase();
-  if (n.includes("taglio")) return "#3b82f6";
-  if (n.includes("barba")) return "#10b981";
-  if (n.includes("ceretta")) return "#a855f7";
-  if (n.includes("colore")) return "#f59e0b";
-  return "#6b7280";
-}
-
-function isCurrentAppointment(startISO: string, endISO: string) {
-  const now = new Date();
-  const start = new Date(startISO);
-  const end = new Date(endISO);
-  return !Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime()) && now >= start && now <= end;
-}
-
-function reorderByIds<T extends { id: string }>(items: T[], ids: string[]) {
-  if (!ids.length) return items;
-  const map = new Map(items.map((item) => [item.id, item]));
-  const ordered = ids.map((id) => map.get(id)).filter(Boolean) as T[];
-  const leftovers = items.filter((item) => !ids.includes(item.id));
-  return [...ordered, ...leftovers];
-}
-
-function withVersion(url: string, version: string) {
-  if (!url) return "";
-  const joiner = url.includes("?") ? "&" : "?";
-  return `${url}${joiner}v=${encodeURIComponent(version)}`;
-}
 
 export default function GestionalePage() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
@@ -213,17 +166,23 @@ export default function GestionalePage() {
   const [loginError, setLoginError] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
 
-  const [tab, setTab] = useState<"dashboard" | "calendario" | "clienti" | "storico" | "servizi" | "impostazioni">("calendario");
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [tab, setTab] = useState<"dashboard" | "calendario" | "clienti" | "storico" | "servizi" | "collaboratori" | "impostazioni">("calendario");
   const [date, setDate] = useState(todayISO());
   const [range, setRange] = useState<"day" | "week" | "month">("day");
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const slotsCacheRef = useRef<Map<string, CachedSlotsState>>(new Map());
+  const slotsDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestSlotsKeyRef = useRef("");
   const [bookings, setBookings] = useState<Booking[]>([]);
-  const [allHistoryBookings, setAllHistoryBookings] = useState<Booking[]>([]);
-  const [dashboardOrderIds, setDashboardOrderIds] = useState<string[]>([]);
-  const [draggingBookingId, setDraggingBookingId] = useState<string>("");
   const [deletingId, setDeletingId] = useState("");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [historySearch, setHistorySearch] = useState("");
+  const [expandedHistoryKeys, setExpandedHistoryKeys] = useState<Record<string, boolean>>({});
+  const [dashboardCollaboratorFilter, setDashboardCollaboratorFilter] = useState("all");
+  const [historyBookings, setHistoryBookings] = useState<Booking[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyMessage, setHistoryMessage] = useState("");
 
   const [settings, setSettings] = useState<BusinessSettings>(DEFAULT_SETTINGS);
   const [settingsLoading, setSettingsLoading] = useState(true);
@@ -238,36 +197,34 @@ export default function GestionalePage() {
   const [savingService, setSavingService] = useState(false);
   const [deletingServiceId, setDeletingServiceId] = useState("");
 
-  const [calendarDate, setCalendarDate] = useState(todayISO());
-  const [calendarBookings, setCalendarBookings] = useState<Booking[]>([]);
-  const [calendarLoading, setCalendarLoading] = useState(true);
-  const [calendarMessage, setCalendarMessage] = useState("");
-  const [calendarDeletingId, setCalendarDeletingId] = useState("");
-  const [savingManualBooking, setSavingManualBooking] = useState(false);
-  const [manualBookingMessage, setManualBookingMessage] = useState("");
-  const [manualBooking, setManualBooking] = useState<ManualBookingForm>(emptyManualBooking());
-  const [logoLoadFailed, setLogoLoadFailed] = useState(false);
-  const [brandingVersion, setBrandingVersion] = useState(() => String(Date.now()));
-  const [openHistoryCustomerKey, setOpenHistoryCustomerKey] = useState<string | null>(null);
-  const [historyInitialized, setHistoryInitialized] = useState(false);
-  const [historySearch, setHistorySearch] = useState("");
+  const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
+  const [collaboratorsLoading, setCollaboratorsLoading] = useState(true);
+  const [collaboratorsMessage, setCollaboratorsMessage] = useState("");
+  const [collaboratorForm, setCollaboratorForm] = useState<Collaborator>(emptyCollaborator());
+  const [savingCollaborator, setSavingCollaborator] = useState(false);
+  const [deletingCollaboratorId, setDeletingCollaboratorId] = useState("");
+  const [newCollaboratorHoliday, setNewCollaboratorHoliday] = useState("");
 
-  const [editingSeriesId, setEditingSeriesId] = useState("");
-  const [editingSeriesNotes, setEditingSeriesNotes] = useState("");
-  const [seriesActionMessage, setSeriesActionMessage] = useState("");
+  const [recurringForm, setRecurringForm] = useState<RecurringForm>(emptyRecurring());
+  const [recurringLoading, setRecurringLoading] = useState(false);
+  const [recurringMessage, setRecurringMessage] = useState("");
+
+  const [calendarServiceId, setCalendarServiceId] = useState("");
+  const [calendarPreferredCollaboratorId, setCalendarPreferredCollaboratorId] = useState("");
+  const [calendarPeopleCount, setCalendarPeopleCount] = useState(1);
+  const [calendarSlots, setCalendarSlots] = useState<string[]>([]);
+  const [calendarSelectedSlot, setCalendarSelectedSlot] = useState("");
+  const [calendarLoadingSlots, setCalendarLoadingSlots] = useState(false);
+  const [calendarBooking, setCalendarBooking] = useState(false);
+  const [calendarName, setCalendarName] = useState("");
+  const [calendarPhone, setCalendarPhone] = useState("");
+  const [calendarNotes, setCalendarNotes] = useState("");
+  const [calendarGroupNamesText, setCalendarGroupNamesText] = useState("");
+  const [calendarMessage, setCalendarMessage] = useState("");
 
   useEffect(() => {
     checkAuth();
   }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!("Notification" in window)) return;
-    if (Notification.permission === "default") {
-      Notification.requestPermission().catch(() => {});
-    }
-  }, []);
-
 
   useEffect(() => {
     if (!authenticated) return;
@@ -278,38 +235,18 @@ export default function GestionalePage() {
     if (!authenticated) return;
     loadSettings();
     loadServices();
-    loadAllHistoryBookings();
+    loadCollaborators();
+    loadHistory();
   }, [authenticated]);
 
   useEffect(() => {
-    if (!authenticated) return;
-    loadCalendarBookings(calendarDate);
-  }, [authenticated, calendarDate]);
-
-  useEffect(() => {
-    setLogoLoadFailed(false);
-  }, [settings.logoUrl, brandingVersion]);
-
-  useEffect(() => {
-    if (services.length > 0 && !manualBooking.serviceId) {
-      setManualBooking((prev) => ({ ...prev, serviceId: services.find((s) => s.active)?.id || services[0].id || "" }));
-    }
-  }, [services, manualBooking.serviceId]);
-
-
-  useEffect(() => {
-    setDashboardOrderIds((prev) => {
-      const nextIds = bookings.map((item) => item.id);
-      if (!prev.length) return nextIds;
-      return [...prev.filter((id) => nextIds.includes(id)), ...nextIds.filter((id) => !prev.includes(id))];
-    });
-  }, [bookings]);
-
-  useEffect(() => {
-    if (tab !== "dashboard") return;
-    const el = document.querySelector(".dashboardNowCard");
-    if (el) el.scrollIntoView({ block: "center", behavior: "smooth" });
-  }, [tab, bookings, range, date]);
+    setRecurringForm((prev) => ({
+      ...prev,
+      serviceId: prev.serviceId || services[0]?.id || "",
+      collaboratorId: prev.collaboratorId || collaborators[0]?.id || "",
+    }));
+    setCalendarServiceId((prev) => prev || services[0]?.id || "");
+  }, [services, collaborators]);
 
   async function checkAuth() {
     try {
@@ -344,14 +281,6 @@ export default function GestionalePage() {
     setAuthenticated(false);
   }
 
-  function openCalendarView(targetDate?: string) {
-    const nextDate = targetDate || date || calendarDate;
-    setCalendarDate(nextDate);
-    setTab("calendario");
-    setMenuOpen(false);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }
-
   async function loadDashboard() {
     setLoading(true);
     setMessage("");
@@ -367,31 +296,18 @@ export default function GestionalePage() {
     }
   }
 
-  async function loadAllHistoryBookings() {
+  async function loadHistory() {
+    setHistoryLoading(true);
+    setHistoryMessage("");
     try {
-      const today = new Date();
-      const start = new Date(today.getFullYear() - 5, 0, 1);
-      const iso = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}-${String(start.getDate()).padStart(2, "0")}`;
-      const res = await fetch(`/api/admin/bookings?date=${iso}&range=month&all=1`, { cache: "no-store" });
-      const data = await safeJson<AllBookingsResponse>(res);
-      setAllHistoryBookings(data.bookings || []);
-    } catch {
-      setAllHistoryBookings([]);
-    }
-  }
-
-  async function loadCalendarBookings(targetDate = calendarDate) {
-    setCalendarLoading(true);
-    setCalendarMessage("");
-    try {
-      const res = await fetch(`/api/admin/bookings?date=${targetDate}&range=day`, { cache: "no-store" });
-      const data = await safeJson<DashboardResponse>(res);
-      setCalendarBookings(data.bookings || []);
+      const res = await fetch("/api/admin/history", { cache: "no-store" });
+      const data = await safeJson<{ ok: boolean; total: number; bookings: Booking[] }>(res);
+      setHistoryBookings(data.bookings || []);
     } catch (e: any) {
-      setCalendarBookings([]);
-      setCalendarMessage(e?.message || "Errore caricamento calendario");
+      setHistoryBookings([]);
+      setHistoryMessage(e?.message || "Errore caricamento storico");
     } finally {
-      setCalendarLoading(false);
+      setHistoryLoading(false);
     }
   }
 
@@ -400,9 +316,7 @@ export default function GestionalePage() {
     try {
       const res = await fetch("/api/admin/settings", { cache: "no-store" });
       const data = await safeJson<{ ok: boolean; settings: BusinessSettings }>(res);
-      const nextSettings = { ...DEFAULT_SETTINGS, ...(data.settings || DEFAULT_SETTINGS), logoUrl: data?.settings?.logoUrl || "" };
-      setSettings(nextSettings);
-      setBrandingVersion(nextSettings.updatedAt || String(Date.now()));
+      setSettings(data.settings || DEFAULT_SETTINGS);
     } catch (e: any) {
       setSettingsMessage(e?.message || "Errore caricamento impostazioni");
     } finally {
@@ -423,6 +337,19 @@ export default function GestionalePage() {
     }
   }
 
+  async function loadCollaborators() {
+    setCollaboratorsLoading(true);
+    try {
+      const res = await fetch("/api/admin/collaborators", { cache: "no-store" });
+      const data = await safeJson<{ ok: boolean; collaborators: Collaborator[] }>(res);
+      setCollaborators(data.collaborators || []);
+    } catch (e: any) {
+      setCollaboratorsMessage(e?.message || "Errore caricamento collaboratori");
+    } finally {
+      setCollaboratorsLoading(false);
+    }
+  }
+
   async function saveSettings() {
     setSavingSettings(true);
     setSettingsMessage("");
@@ -433,14 +360,8 @@ export default function GestionalePage() {
         body: JSON.stringify(settings),
       });
       const data = await safeJson<{ ok: boolean; settings: BusinessSettings }>(res);
-      const nextVersion = data.settings?.updatedAt || String(Date.now());
       setSettings(data.settings);
-      setBrandingVersion(nextVersion);
-      if (typeof window !== "undefined") {
-        localStorage.setItem("branding_version", nextVersion);
-        window.dispatchEvent(new Event("branding-updated"));
-      }
-      setSettingsMessage("Impostazioni salvate e sincronizzate nella web app.");
+      setSettingsMessage("Impostazioni salvate.");
     } catch (e: any) {
       setSettingsMessage(e?.message || "Errore salvataggio impostazioni");
     } finally {
@@ -452,23 +373,14 @@ export default function GestionalePage() {
     setSavingService(true);
     setServicesMessage("");
     try {
-      const payload = {
-        ...serviceForm,
-        id: String(serviceForm.id || "").trim() || undefined,
-        name: String(serviceForm.name || "").trim(),
-        durationMin: Number(serviceForm.durationMin) || 30,
-        price: Number(serviceForm.price) || 0,
-        active: serviceForm.active !== false,
-      };
-
+      const payload = { ...serviceForm, id: serviceForm.id || undefined };
       const res = await fetch("/api/admin/services", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-
-      await safeJson(res);
-      await loadServices();
+      const data = await safeJson<{ ok: boolean; services: Service[] }>(res);
+      setServices(data.services || []);
       setServiceForm(emptyService());
       setServicesMessage("Servizio salvato con successo.");
     } catch (e: any) {
@@ -478,41 +390,36 @@ export default function GestionalePage() {
     }
   }
 
+  async function saveCollaborator() {
+    setSavingCollaborator(true);
+    setCollaboratorsMessage("");
+    try {
+      const payload = { ...collaboratorForm, id: collaboratorForm.id || undefined };
+      const res = await fetch("/api/admin/collaborators", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await safeJson<{ ok: boolean; collaborators: Collaborator[] }>(res);
+      setCollaborators(data.collaborators || []);
+      setCollaboratorForm(emptyCollaborator());
+      setCollaboratorsMessage("Collaboratore salvato con successo.");
+    } catch (e: any) {
+      setCollaboratorsMessage(e?.message || "Errore salvataggio collaboratore");
+    } finally {
+      setSavingCollaborator(false);
+    }
+  }
+
   async function removeService(id: string) {
     const ok = window.confirm("Vuoi davvero eliminare questo servizio?");
     if (!ok) return;
     setDeletingServiceId(id);
     try {
-      const res = await fetch(`/api/admin/services?id=${encodeURIComponent(id)}`, {
-        method: "DELETE",
-        cache: "no-store",
-      });
-      const data = await safeJson<{
-        ok: boolean;
-        services: Service[];
-        result?: {
-          deleted?: boolean;
-          deactivated?: boolean;
-          activeReferenced?: boolean;
-          historicalReferenced?: boolean;
-        };
-      }>(res);
-      await loadServices();
+      const res = await fetch(`/api/admin/services?id=${id}`, { method: "DELETE" });
+      const data = await safeJson<{ ok: boolean; services: Service[] }>(res);
+      setServices(data.services || []);
       if (serviceForm.id === id) setServiceForm(emptyService());
-
-      if (data?.result?.deleted) {
-        setServicesMessage(
-          data?.result?.historicalReferenced
-            ? "Servizio rimosso con successo. Lo storico è stato mantenuto."
-            : "Servizio rimosso con successo."
-        );
-      } else if (data?.result?.activeReferenced) {
-        setServicesMessage("Servizio disattivato: è collegato a prenotazioni attive.");
-      } else if (data?.result?.deactivated) {
-        setServicesMessage("Servizio disattivato.");
-      } else {
-        setServicesMessage("Operazione completata.");
-      }
     } catch (e: any) {
       setServicesMessage(e?.message || "Errore eliminazione servizio");
     } finally {
@@ -520,159 +427,55 @@ export default function GestionalePage() {
     }
   }
 
-  async function removeBooking(id: string) {
-    const ok = window.confirm("Vuoi eliminare questo appuntamento dal gestionale?");
+  async function removeCollaborator(id: string) {
+    const ok = window.confirm("Vuoi davvero eliminare questo collaboratore?");
     if (!ok) return;
-    setDeletingId(id);
+    setDeletingCollaboratorId(id);
     try {
-      const res = await fetch(`/api/admin/bookings?id=${encodeURIComponent(id)}`, { method: "DELETE", cache: "no-store" });
+      const res = await fetch(`/api/admin/collaborators?id=${id}`, { method: "DELETE" });
+      const data = await safeJson<{ ok: boolean; collaborators: Collaborator[] }>(res);
+      setCollaborators(data.collaborators || []);
+      if (collaboratorForm.id === id) setCollaboratorForm(emptyCollaborator());
+    } catch (e: any) {
+      setCollaboratorsMessage(e?.message || "Errore eliminazione collaboratore");
+    } finally {
+      setDeletingCollaboratorId("");
+    }
+  }
+
+  async function removeBooking(item: Booking) {
+    let scope: "single" | "series" = "single";
+
+    if (item.recurringRuleId) {
+      const choice = window.prompt(
+        "Questo appuntamento fa parte di una ricorrenza. Scrivi: SOLO per eliminare solo questo appuntamento, TUTTA per eliminare tutta la ricorrenza.",
+        "SOLO"
+      );
+      if (!choice) return;
+      const normalizedChoice = choice.trim().toLowerCase();
+      if (normalizedChoice === "tutta") {
+        scope = "series";
+      } else if (normalizedChoice !== "solo") {
+        window.alert("Scelta non valida. Scrivi SOLO oppure TUTTA.");
+        return;
+      }
+    } else {
+      const ok = window.confirm("Vuoi eliminare questo appuntamento dal gestionale?");
+      if (!ok) return;
+    }
+
+    setDeletingId(item.id);
+    try {
+      const query = new URLSearchParams({ calendarId: item.calendarId || "", scope }).toString();
+      const res = await fetch(`/api/admin/bookings/${item.id}?${query}`, { method: "DELETE" });
       await safeJson(res);
-      setBookings((prev) => prev.filter((item) => item.id !== id));
-      setCalendarBookings((prev) => prev.filter((item) => item.id !== id));
-      setAllHistoryBookings((prev) => prev.filter((item) => item.id !== id));
+      await Promise.all([loadDashboard(), loadHistory()]);
+      setMessage(scope === "series" ? "Ricorrenza eliminata con successo." : "Appuntamento eliminato con successo.");
+      setHistoryMessage("");
     } catch (e: any) {
       setMessage(e?.message || "Errore eliminazione appuntamento");
     } finally {
       setDeletingId("");
-    }
-  }
-
-  async function removeCalendarBooking(id: string) {
-    const ok = window.confirm("Vuoi disdire questo appuntamento dal calendario?");
-    if (!ok) return;
-    setCalendarDeletingId(id);
-    setManualBookingMessage("");
-    try {
-      const res = await fetch(`/api/admin/bookings?id=${encodeURIComponent(id)}`, { method: "DELETE", cache: "no-store" });
-      await safeJson(res);
-      setCalendarBookings((prev) => prev.filter((item) => item.id !== id));
-      setBookings((prev) => prev.filter((item) => item.id !== id));
-      setAllHistoryBookings((prev) => prev.filter((item) => item.id !== id));
-      setManualBookingMessage("Appuntamento disdetto con successo.");
-    } catch (e: any) {
-      setManualBookingMessage(e?.message || "Errore disdetta appuntamento");
-    } finally {
-      setCalendarDeletingId("");
-    }
-  }
-
-  async function createManualBooking() {
-    setManualBookingMessage("");
-
-    if (!manualBooking.time) {
-      setManualBookingMessage("Seleziona un orario.");
-      return;
-    }
-
-    if (!manualBooking.name.trim() || !manualBooking.phone.trim()) {
-      setManualBookingMessage("Inserisci nome e telefono.");
-      return;
-    }
-
-    setSavingManualBooking(true);
-    try {
-      const res = await fetch("/api/admin/bookings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...manualBooking, date: calendarDate }),
-      });
-
-      const data = await safeJson<{
-        ok: boolean;
-        booking?: Booking;
-        recurring?: boolean;
-        created?: Booking[];
-        skipped?: Array<{ date: string; reason: string }>;
-        createdCount?: number;
-        skippedCount?: number;
-      }>(res);
-
-      const serviceIdToKeep = manualBooking.serviceId;
-
-      if (data.recurring) {
-        setManualBooking((prev) => ({
-          ...emptyManualBooking(serviceIdToKeep),
-          repeatEnabled: prev.repeatEnabled,
-          every: prev.every,
-          unit: prev.unit,
-          occurrences: prev.occurrences,
-        }));
-
-        const created = data.created || [];
-        const skippedCount = Number(data.skippedCount || 0);
-        const createdCount = Number(data.createdCount || created.length || 0);
-
-        setManualBookingMessage(
-          skippedCount > 0
-            ? `Ricorrenza creata. Appuntamenti creati: ${createdCount}. Saltati: ${skippedCount}.`
-            : `Ricorrenza creata con successo. Appuntamenti creati: ${createdCount}.`
-        );
-
-        await loadCalendarBookings(calendarDate);
-      } else {
-        setManualBooking(emptyManualBooking(serviceIdToKeep));
-        setManualBookingMessage("Prenotazione confermata con successo.");
-        if (data.booking) {
-          setCalendarBookings((prev) => [...prev, data.booking!].sort((a, b) => a.startISO.localeCompare(b.startISO)));
-        } else {
-          await loadCalendarBookings(calendarDate);
-        }
-      }
-
-      await loadAllHistoryBookings();
-      if (date === calendarDate && range === "day") {
-        loadDashboard();
-      }
-    } catch (e: any) {
-      setManualBookingMessage(e?.message || "Errore prenotazione");
-    } finally {
-      setSavingManualBooking(false);
-    }
-  }
-
-
-  async function deleteSeries(seriesId: string) {
-    const ok = window.confirm("Vuoi eliminare tutta la serie ricorrente?");
-    if (!ok) return;
-
-    setSeriesActionMessage("");
-    try {
-      const res = await fetch(`/api/admin/bookings?seriesId=${encodeURIComponent(seriesId)}`, {
-        method: "DELETE",
-        cache: "no-store",
-      });
-      await safeJson(res);
-      setSeriesActionMessage("Serie ricorrente disdetta con successo.");
-      await loadCalendarBookings(calendarDate);
-      await loadAllHistoryBookings();
-      if (date === calendarDate && range === "day") {
-        loadDashboard();
-      } else {
-        loadDashboard();
-      }
-    } catch (e: any) {
-      setSeriesActionMessage(e?.message || "Errore disdetta ricorrenza");
-    }
-  }
-
-  async function saveSeriesNotes() {
-    if (!editingSeriesId) return;
-    setSeriesActionMessage("");
-    try {
-      const res = await fetch("/api/admin/bookings", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ seriesId: editingSeriesId, notes: editingSeriesNotes }),
-      });
-      await safeJson(res);
-      setSeriesActionMessage("Serie ricorrente aggiornata con successo.");
-      setEditingSeriesId("");
-      setEditingSeriesNotes("");
-      await loadCalendarBookings(calendarDate);
-      await loadAllHistoryBookings();
-      loadDashboard();
-    } catch (e: any) {
-      setSeriesActionMessage(e?.message || "Errore aggiornamento ricorrenza");
     }
   }
 
@@ -691,168 +494,329 @@ export default function GestionalePage() {
     setNewHoliday("");
   }
 
+  function toggleCollaboratorWeekday(day: number) {
+    setCollaboratorForm((prev) => ({
+      ...prev,
+      weeklyOffDays: prev.weeklyOffDays.includes(day)
+        ? prev.weeklyOffDays.filter((d) => d !== day)
+        : [...prev.weeklyOffDays, day].sort((a, b) => a - b),
+    }));
+  }
+
+  function addCollaboratorHoliday() {
+    if (!newCollaboratorHoliday) return;
+    setCollaboratorForm((prev) => ({
+      ...prev,
+      holidays: Array.from(new Set([...(prev.holidays || []), newCollaboratorHoliday])).sort(),
+    }));
+    setNewCollaboratorHoliday("");
+  }
+
+  async function createRecurringBookings() {
+    setRecurringLoading(true);
+    setRecurringMessage("");
+    try {
+      const res = await fetch("/api/admin/recurring-bookings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(recurringForm),
+      });
+      const data = await safeJson<{ ok: boolean; createdCount: number; skippedCount: number }>(res);
+      setRecurringMessage(`Ricorrenza creata. Appuntamenti creati: ${data.createdCount}. Saltati: ${data.skippedCount}.`);
+      loadDashboard();
+    } catch (e: any) {
+      setRecurringMessage(e?.message || "Errore creazione ricorrenza");
+    } finally {
+      setRecurringLoading(false);
+    }
+  }
+
+  function fillRecurringFromCustomer(customerName: string, phone: string) {
+    setRecurringForm((prev) => ({ ...prev, customerName, phone }));
+    setTab("calendario");
+    setRecurringMessage("");
+  }
+
+const calendarGroupNames = useMemo(
+    () => calendarGroupNamesText.split("\n").map((item) => item.trim()).filter(Boolean),
+    [calendarGroupNamesText]
+  );
+
+  const calendarHoursLabel = useMemo(() => {
+    const parts: string[] = [];
+    if (settings.morningEnabled) parts.push(`Mattina ${settings.morningOpen}-${settings.morningClose}`);
+    if (settings.afternoonEnabled) parts.push(`Pomeriggio ${settings.afternoonOpen}-${settings.afternoonClose}`);
+    return parts.join(" · ");
+  }, [settings]);
+
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [tab]);
+
+  useEffect(() => {
+    if (!authenticated || !calendarServiceId) return;
+
+    const qs = new URLSearchParams({
+      date,
+      serviceId: calendarServiceId,
+      peopleCount: String(calendarPeopleCount),
+      adminBypassMinAdvance: "1",
+    });
+
+    if (calendarPreferredCollaboratorId) {
+      qs.set("preferredCollaboratorId", calendarPreferredCollaboratorId);
+      qs.set("collaboratorId", calendarPreferredCollaboratorId);
+    }
+
+    const requestKey = qs.toString();
+    latestSlotsKeyRef.current = requestKey;
+    setCalendarSelectedSlot("");
+    setCalendarMessage("");
+
+    const cached = slotsCacheRef.current.get(requestKey);
+    if (cached) {
+      setCalendarSlots(cached.slots);
+      setCalendarLoadingSlots(false);
+      return;
+    }
+
+    setCalendarLoadingSlots(true);
+
+    if (slotsDebounceRef.current) clearTimeout(slotsDebounceRef.current);
+
+    slotsDebounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/slots?${requestKey}`);
+        const data = await safeJson<SlotsResponse>(res);
+        const nextState = { slots: data.slots || [], settings: null };
+        slotsCacheRef.current.set(requestKey, nextState);
+        if (latestSlotsKeyRef.current !== requestKey) return;
+        setCalendarSlots(nextState.slots);
+      } catch (e: any) {
+        if (latestSlotsKeyRef.current !== requestKey) return;
+        setCalendarSlots([]);
+        setCalendarMessage(e?.message || "Errore caricamento slot");
+      } finally {
+        if (latestSlotsKeyRef.current === requestKey) setCalendarLoadingSlots(false);
+      }
+    }, 400);
+
+    return () => {
+      if (slotsDebounceRef.current) clearTimeout(slotsDebounceRef.current);
+    };
+  }, [authenticated, date, calendarServiceId, calendarPreferredCollaboratorId, calendarPeopleCount]);
+
+  async function refreshCalendarSlots() {
+    if (!calendarServiceId) return;
+
+    const qs = new URLSearchParams({
+      date,
+      serviceId: calendarServiceId,
+      peopleCount: String(calendarPeopleCount),
+      adminBypassMinAdvance: "1",
+    });
+
+    if (calendarPreferredCollaboratorId) {
+      qs.set("preferredCollaboratorId", calendarPreferredCollaboratorId);
+      qs.set("collaboratorId", calendarPreferredCollaboratorId);
+    }
+
+    const requestKey = qs.toString();
+    const res = await fetch(`/api/slots?${requestKey}`);
+    const data = await safeJson<SlotsResponse>(res);
+    const nextState = { slots: data.slots || [], settings: null };
+    slotsCacheRef.current.set(requestKey, nextState);
+    setCalendarSlots(nextState.slots);
+  }
+
+  async function createManualBooking() {
+    setCalendarMessage("");
+
+    if (!calendarSelectedSlot) {
+      setCalendarMessage("Seleziona un orario.");
+      return;
+    }
+
+    if (!calendarName.trim() || !calendarPhone.trim()) {
+      setCalendarMessage("Inserisci nome e telefono.");
+      return;
+    }
+
+    if (calendarPeopleCount > 1 && calendarGroupNames.length === 0) {
+      setCalendarMessage("Per una prenotazione di gruppo inserisci almeno un nome per persona, uno per riga.");
+      return;
+    }
+
+    setCalendarBooking(true);
+
+    try {
+      const res = await fetch("/api/book", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          serviceId: calendarServiceId,
+          preferredCollaboratorId: calendarPreferredCollaboratorId,
+          collaboratorId: calendarPreferredCollaboratorId,
+          date,
+          time: calendarSelectedSlot,
+          name: calendarName.trim(),
+          phone: calendarPhone.trim(),
+          notes: "",
+          peopleCount: calendarPeopleCount,
+          customerNames: calendarPeopleCount > 1 ? calendarGroupNames : [calendarName.trim()],
+          adminBypassMinAdvance: true,
+        }),
+      });
+
+      const data = await safeJson<BookResponse>(res);
+      const summary =
+        data.bookings?.map((item) => `${item.customerName}: ${item.collaboratorName}`).join(" | ") ||
+        "Appuntamento inserito";
+
+      setCalendarMessage(
+        calendarPeopleCount > 1
+          ? `Prenotazione gruppo creata. ${summary}`
+          : `Prenotazione creata con successo. ${summary}`
+      );
+
+      setCalendarSelectedSlot("");
+      setCalendarName("");
+      setCalendarPhone("");
+      setCalendarNotes("");
+      setCalendarGroupNamesText("");
+
+      await refreshCalendarSlots();
+      await loadDashboard();
+    } catch (e: any) {
+      setCalendarMessage(e?.message || "Errore prenotazione");
+    } finally {
+      setCalendarBooking(false);
+    }
+  }
+
   const stats = useMemo(() => {
     const totalRevenue = bookings.reduce((sum, item) => sum + (Number(item.price) || 0), 0);
     const withPhone = bookings.filter((b) => b.phone).length;
     const uniqueClients = new Set(bookings.map((b) => `${b.customerName}|${b.phone}`)).size;
-    return { totalAppointments: bookings.length, totalRevenue, withPhone, uniqueClients };
-  }, [bookings]);
+    const activeCollaborators = collaborators.filter((c) => c.active).length;
+    return { totalAppointments: bookings.length, totalRevenue, withPhone, uniqueClients, activeCollaborators };
+  }, [bookings, collaborators]);
 
-  const dashboardBookings = useMemo(
-    () => reorderByIds([...bookings].sort((a, b) => a.startISO.localeCompare(b.startISO)), dashboardOrderIds),
-    [bookings, dashboardOrderIds]
-  );
-
-  const dashboardTimeline = useMemo(() => {
-    const step = Number(settings.slotIntervalMin) || 15;
-    const slots = generateStartSlots(settings, step);
-    return slots.map((slot) => {
-      const booking = dashboardBookings.find((item) => overlapsRange(slot, addMinutes(slot, step), item.startLabel, item.endLabel)) || null;
-      return {
-        slot,
-        booking,
-        isStart: booking ? booking.startLabel === slot : false,
-        isOccupied: Boolean(booking),
-      };
-    });
-  }, [settings, dashboardBookings]);
-
-  const dashboardBookingsSorted = useMemo(
+  const allBookingsSorted = useMemo(
     () => [...bookings].sort((a, b) => new Date(b.startISO).getTime() - new Date(a.startISO).getTime()),
     [bookings]
   );
 
-  const allBookingsSorted = useMemo(
-    () => [...allHistoryBookings].sort((a, b) => new Date(b.startISO).getTime() - new Date(a.startISO).getTime()),
-    [allHistoryBookings]
+  const allHistoryBookingsSorted = useMemo(
+    () => [...historyBookings].sort((a, b) => new Date(b.startISO).getTime() - new Date(a.startISO).getTime()),
+    [historyBookings]
   );
 
-  const customerHistoryGroups = useMemo(() => {
-    const map = new Map<string, CustomerHistory>();
-    for (const booking of allBookingsSorted) {
+  const filteredDashboardBookings = useMemo(() => {
+    if (dashboardCollaboratorFilter === "all") return bookings;
+    return bookings.filter((booking) => booking.collaboratorId === dashboardCollaboratorFilter);
+  }, [bookings, dashboardCollaboratorFilter]);
+
+  const customers = useMemo(() => {
+    const map = new Map<string, { customerName: string; phone: string; totalBookings: number; totalSpent: number; lastDate: string; whatsappUrl: string }>();
+    for (const booking of allHistoryBookingsSorted) {
       const key = `${booking.customerName}|${booking.phone}`;
       const prev = map.get(key) || {
-        key,
         customerName: booking.customerName,
         phone: booking.phone,
         totalBookings: 0,
         totalSpent: 0,
+        lastDate: booking.dateLabel,
         whatsappUrl: booking.whatsappUrl,
-        bookings: [],
       };
       prev.totalBookings += 1;
       prev.totalSpent += Number(booking.price) || 0;
-      if (!prev.whatsappUrl && booking.whatsappUrl) prev.whatsappUrl = booking.whatsappUrl;
+      prev.lastDate = booking.dateLabel || prev.lastDate;
+      map.set(key, prev);
+    }
+    return Array.from(map.values()).sort((a, b) => b.totalBookings - a.totalBookings);
+  }, [allHistoryBookingsSorted]);
+
+  const filteredStats = useMemo(() => {
+    const totalRevenue = filteredDashboardBookings.reduce((sum, item) => sum + (Number(item.price) || 0), 0);
+    const uniqueClients = new Set(filteredDashboardBookings.map((item) => `${item.customerName}|${item.phone}`)).size;
+    const withPhone = filteredDashboardBookings.filter((item) => item.phone).length;
+    const activeCollaborators =
+      dashboardCollaboratorFilter === "all"
+        ? collaborators.filter((c) => c.active).length
+        : collaborators.filter((c) => c.active && c.id === dashboardCollaboratorFilter).length;
+
+    return {
+      totalAppointments: filteredDashboardBookings.length,
+      totalRevenue,
+      withPhone,
+      uniqueClients,
+      activeCollaborators,
+    };
+  }, [filteredDashboardBookings, collaborators, dashboardCollaboratorFilter]);
+
+  const historyCustomers = useMemo(() => {
+    const map = new Map<string, {
+      key: string;
+      customerName: string;
+      phone: string;
+      whatsappUrl: string;
+      totalBookings: number;
+      totalSpent: number;
+      lastDate: string;
+      bookings: Booking[];
+    }>();
+
+    for (const booking of allHistoryBookingsSorted) {
+      const key = `${String(booking.customerName || "").trim()}|${String(booking.phone || "").trim()}`;
+      const prev = map.get(key) || {
+        key,
+        customerName: booking.customerName,
+        phone: booking.phone,
+        whatsappUrl: booking.whatsappUrl,
+        totalBookings: 0,
+        totalSpent: 0,
+        lastDate: booking.dateLabel,
+        bookings: [],
+      };
+
+      prev.totalBookings += 1;
+      prev.totalSpent += Number(booking.price) || 0;
+      prev.lastDate = booking.dateLabel || prev.lastDate;
       prev.bookings.push(booking);
       map.set(key, prev);
     }
+
+    const normalizedSearch = historySearch.trim().toLowerCase();
+
     return Array.from(map.values())
-      .map((group) => ({
-        ...group,
-        bookings: [...group.bookings].sort((a, b) => new Date(b.startISO).getTime() - new Date(a.startISO).getTime()),
-      }))
+      .filter((customer) => {
+        if (!normalizedSearch) return true;
+        return (
+          customer.customerName.toLowerCase().includes(normalizedSearch) ||
+          String(customer.phone || "").toLowerCase().includes(normalizedSearch)
+        );
+      })
       .sort((a, b) => {
-        const aTime = a.bookings[0] ? new Date(a.bookings[0].startISO).getTime() : 0;
-        const bTime = b.bookings[0] ? new Date(b.bookings[0].startISO).getTime() : 0;
-        return bTime - aTime;
+        const byName = a.customerName.localeCompare(b.customerName, "it");
+        if (byName !== 0) return byName;
+        return String(a.phone || "").localeCompare(String(b.phone || ""), "it");
       });
-  }, [allBookingsSorted]);
-
-  const customers = useMemo(
-    () =>
-      customerHistoryGroups.map((group) => ({
-        key: group.key,
-        customerName: group.customerName,
-        phone: group.phone,
-        totalBookings: group.totalBookings,
-        totalSpent: group.totalSpent,
-        whatsappUrl: group.whatsappUrl,
-        servicesHistory: group.bookings.map((item) => ({
-          id: item.id,
-          date: item.dateLabel,
-          service: item.serviceName,
-          price: item.price,
-          notes: item.notes,
-        })),
-      })),
-    [customerHistoryGroups]
-  );
-
-  const filteredCustomerHistoryGroups = useMemo(() => {
-    const query = historySearch.trim().toLowerCase();
-    if (!query) return customerHistoryGroups;
-    return customerHistoryGroups.filter((customer) => {
-      const latestBooking = customer.bookings[0];
-      const haystack = [
-        customer.customerName,
-        customer.phone,
-        latestBooking?.serviceName || "",
-        ...customer.bookings.map((item) => `${item.serviceName} ${item.notes || ""}`),
-      ]
-        .join(" ")
-        .toLowerCase();
-      return haystack.includes(query);
-    });
-  }, [customerHistoryGroups, historySearch]);
+  }, [allHistoryBookingsSorted, historySearch]);
 
   useEffect(() => {
-    if (filteredCustomerHistoryGroups.length === 0) {
-      setOpenHistoryCustomerKey(null);
-      setHistoryInitialized(false);
-      return;
-    }
-
-    if (!historyInitialized) {
-      setOpenHistoryCustomerKey(filteredCustomerHistoryGroups[0]?.key || null);
-      setHistoryInitialized(true);
-      return;
-    }
-
-    if (openHistoryCustomerKey && !filteredCustomerHistoryGroups.some((group) => group.key === openHistoryCustomerKey)) {
-      setOpenHistoryCustomerKey(filteredCustomerHistoryGroups[0]?.key || null);
-    }
-  }, [filteredCustomerHistoryGroups, openHistoryCustomerKey, historyInitialized]);
-
-  const activeServices = useMemo(() => services.filter((service) => service.active), [services]);
-  const selectedService = useMemo(
-    () => activeServices.find((service) => service.id === manualBooking.serviceId) || activeServices[0] || null,
-    [activeServices, manualBooking.serviceId]
-  );
-
-  const calendarGridSlots = useMemo(() => {
-    const step = Number(settings.slotIntervalMin) || 15;
-    return generateStartSlots(settings, step).filter((time) => !isPastSlot(calendarDate, time) || calendarBookings.some((booking) => overlapsRange(time, addMinutes(time, step), booking.startLabel, booking.endLabel)));
-  }, [settings, calendarDate, calendarBookings]);
-
-  const slotOccupancyMap = useMemo(() => {
-    const map = new Map<string, Booking>();
-    const step = Number(settings.slotIntervalMin) || 15;
-    for (const slot of calendarGridSlots) {
-      const booking = calendarBookings.find((item) => overlapsRange(slot, addMinutes(slot, step), item.startLabel, item.endLabel));
-      if (booking) map.set(slot, booking);
-    }
-    return map;
-  }, [calendarBookings, calendarGridSlots, settings.slotIntervalMin]);
-
-  const availableCalendarSlots = useMemo(() => {
-    if (!selectedService) return [];
-    const baseSlots = generateStartSlots(settings, selectedService.durationMin);
-    return baseSlots.filter((slot) => {
-      if (isPastSlot(calendarDate, slot)) return false;
-      const slotEnd = addMinutes(slot, selectedService.durationMin);
-      return !calendarBookings.some((booking) => overlapsRange(slot, slotEnd, booking.startLabel, booking.endLabel));
+    setExpandedHistoryKeys((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      Object.keys(next).forEach((key) => {
+        if (!historyCustomers.some((customer) => customer.key === key)) {
+          delete next[key];
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
     });
-  }, [settings, selectedService, calendarBookings, calendarDate]);
-
-  const selectedTimeAvailable = useMemo(() => {
-    if (!manualBooking.time || !selectedService) return false;
-    return availableCalendarSlots.includes(manualBooking.time);
-  }, [availableCalendarSlots, manualBooking.time, selectedService]);
-
-  const orderedCalendarBookings = useMemo(
-    () => [...calendarBookings].sort((a, b) => a.startISO.localeCompare(b.startISO)),
-    [calendarBookings]
-  );
+  }, [historyCustomers]);
 
   if (authenticated === null) {
     return <main className="container wideContainer"><div className="card"><div className="badge info">Caricamento gestionale...</div></div></main>;
@@ -870,276 +834,534 @@ export default function GestionalePage() {
         <section className="card">
           <div className="grid">
             {loginError && <div className="badge error">{loginError}</div>}
-            <div><label>Username</label><input value={username} onChange={(e) => setUsername(e.target.value)} /></div>
-            <div><label>Password</label><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></div>
-            <button type="button" className="btn" onClick={login} disabled={loginLoading}>{loginLoading ? "Accesso..." : "Entra nel gestionale"}</button>
+            <div>
+              <label>Username</label>
+              <input value={username} onChange={(e) => setUsername(e.target.value)} />
+            </div>
+            <div>
+              <label>Password</label>
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            </div>
+            <button className="btn" onClick={login} disabled={loginLoading}>{loginLoading ? "Accesso..." : "Entra nel gestionale"}</button>
           </div>
         </section>
       </main>
     );
   }
 
-  const menuItems: Array<{ value: "dashboard" | "calendario" | "clienti" | "storico" | "servizi" | "impostazioni"; label: string }> = [
-    { value: "dashboard", label: "Dashboard" },
-    { value: "calendario", label: "Calendario" },
-    { value: "clienti", label: "Clienti" },
-    { value: "storico", label: "Storico" },
-    { value: "servizi", label: "Servizi & Prezzi" },
-    { value: "impostazioni", label: "Impostazioni" },
-  ];
-
   return (
-    <main className="container wideContainer gestionaleShell">
-      <div className="sideMenuWrap">
-        <button type="button" className={`menuToggle ${menuOpen ? "open" : ""}`} onClick={() => setMenuOpen((p) => !p)} aria-label="Apri menu">
-          <span /><span /><span />
-        </button>
-        <div className={`sideMenuPanel ${menuOpen ? "show" : ""}`}>
-          <div className="sideMenuHeader">
-            <div><div className="sectionTitle">Gestionale</div><div className="muted">Controllo appuntamenti, clienti e impostazioni</div></div>
-          </div>
-          <div className="sideMenuList">
-            {menuItems.map((item) => (
-              <button key={item.value} type="button" className={`tabBtn sideMenuBtn ${tab === item.value ? "activeTab" : ""}`} onClick={() => { setTab(item.value); setMenuOpen(false); }}>
-                {item.label}
-              </button>
-            ))}
-          </div>
-          <button type="button" className="btn sideMenuLogout" onClick={logout}>Esci</button>
-        </div>
-      </div>
+    <main className="container wideContainer">
+      <header className="hero leftHero" style={{ marginBottom: 18 }}>
+        <div className="brand leftBrand" style={{ width: "100%" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
+            <div>
+              <div className="title">Gestionale</div>
+              
+            </div>
 
-      <header className="hero leftHero">
-        <div className="brand leftBrand">
-          <div className="logoWrap">
-            {settings.logoUrl && !logoLoadFailed ? <img src={withVersion(settings.logoUrl, brandingVersion)} alt={settings.brandTitle || "Logo salone"} style={{ objectFit: "contain", width: "100%", height: "100%", padding: 12 }} onError={() => setLogoLoadFailed(true)} /> : <div className="title" style={{ fontSize: 18 }}>{settings.brandTitle || "Gestionale"}</div>}
+            <div style={{ position: "relative", marginLeft: "auto" }}>
+              <button
+                className="tabBtn"
+                onClick={() => setMenuOpen((prev) => !prev)}
+                style={{ minWidth: 190 }}
+              >
+                Menu rapido ▾
+              </button>
+
+              {menuOpen && (
+                <div
+                  style={{
+                    position: "absolute",
+                    right: 0,
+                    top: "calc(100% + 10px)",
+                    minWidth: 250,
+                    background: "#111",
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    borderRadius: 14,
+                    padding: 10,
+                    display: "grid",
+                    gap: 8,
+                    zIndex: 20,
+                    boxShadow: "0 14px 34px rgba(0,0,0,0.35)",
+                  }}
+                >
+                  {[
+                    ["calendario", "Calendario"],
+                    ["dashboard", "Dashboard"],
+                    ["clienti", "Clienti"],
+                    ["storico", "Storico"],
+                    ["servizi", "Servizi & Prezzi"],
+                    ["collaboratori", "Collaboratori"],
+                    ["impostazioni", "Impostazioni"],
+                  ].map(([value, label]) => (
+                    <button
+                      key={value}
+                      className={`tabBtn ${tab === value ? "activeTab" : ""}`}
+                      onClick={() => setTab(value as any)}
+                      style={{ width: "100%", justifyContent: "flex-start" }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                  <button className="tabBtn secondaryBtn" onClick={logout} style={{ width: "100%" }}>
+                    Esci
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
-          <div className="title">Gestionale appuntamenti</div>
-          <p className="subtitle">{hoursLabel(settings)}</p>
         </div>
       </header>
 
+      <section className="card" style={{ marginBottom: 18 }}>
+        <div className="tabRow" style={{ justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+          <div className="badge info">
+            Sezione attiva: {tab === "calendario" ? "Calendario" : tab === "dashboard" ? "Dashboard" : tab === "clienti" ? "Clienti" : tab === "storico" ? "Storico" : tab === "servizi" ? "Servizi & Prezzi" : tab === "collaboratori" ? "Collaboratori" : "Impostazioni"}
+          </div>
+          
+        </div>
+      </section>
+
       {tab === "dashboard" && (
         <>
-          <section className="card dashboardHeroCard">
-            <div className="dashboardHeroHeader">
-              <div><div className="sectionTitle">Panoramica</div><div className="dashboardHeroText">Vista rapida degli appuntamenti per il periodo selezionato, con totale clienti, ricavi e contatti.</div></div>
-              <div className="dashboardCountBadge">{bookings.length} appuntamenti</div>
-            </div>
-            <div className="dashboardFilters">
-              <div><label>Data di riferimento</label><input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
-              <div><label>Intervallo</label><select value={range} onChange={(e) => setRange(e.target.value as "day" | "week" | "month")}><option value="day">Giorno</option><option value="week">Settimana</option><option value="month">Mese</option></select></div>
+          <section className="card" style={{ marginBottom: 18 }}>
+            <div className="gridTwoCols">
+              <div>
+                <label>Data base</label>
+                <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+              </div>
+              <div>
+                <label>Vista</label>
+                <select value={range} onChange={(e) => setRange(e.target.value as any)}>
+                  <option value="day">Giorno</option>
+                  <option value="week">Settimana</option>
+                  <option value="month">Mese</option>
+                </select>
+              </div>
             </div>
           </section>
 
-          <section className="card dashboardStats">
-            <div className="statsRow">
-              <div className="statBox statBoxProfessional"><span>Appuntamenti</span><strong>{stats.totalAppointments}</strong><small>Nel periodo selezionato</small></div>
-              <div className="statBox statBoxProfessional"><span>Incasso</span><strong>€{stats.totalRevenue.toFixed(2)}</strong><small>Totale servizi prenotati</small></div>
-              <div className="statBox statBoxProfessional"><span>Clienti unici</span><strong>{stats.uniqueClients}</strong><small>Contatti distinti</small></div>
-              <div className="statBox statBoxProfessional"><span>Con telefono</span><strong>{stats.withPhone}</strong><small>Pronti per richiamo o WhatsApp</small></div>
-            </div>
+          <section className="statsRow" style={{ marginBottom: 18 }}>
+            <div className="statBox"><strong>{filteredStats.totalAppointments}</strong><span>Appuntamenti</span></div>
+            <div className="statBox"><strong>€{filteredStats.totalRevenue}</strong><span>Incasso stimato</span></div>
+            <div className="statBox"><strong>{filteredStats.uniqueClients}</strong><span>Clienti unici</span></div>
+            <div className="statBox"><strong>{filteredStats.activeCollaborators}</strong><span>Collaboratori attivi</span></div>
           </section>
 
           <section className="card">
-            <div className="dashboardSectionHeader"><div className="sectionTitle">Timeline</div>{message && <div className="badge error">{message}</div>}</div>
-            {loading ? <div className="badge info">Caricamento appuntamenti...</div> : dashboardTimeline.length === 0 ? <div className="badge info">Nessuno slot disponibile per la timeline corrente.</div> : (
-              <div className="dashboardTimeline">
-                {dashboardTimeline.map(({ slot, booking, isStart, isOccupied }) => {
-                  const rowNow = booking ? isCurrentAppointment(booking.startISO, booking.endISO) : false;
-                  return (
-                    <div key={slot} className={`dashboardTimelineRow ${rowNow ? "dashboardTimelineRowNow" : ""}`}>
-                      <div className="dashboardTimelineHour">{slot}</div>
-                      <div className="dashboardTimelineContent">
-                        {!booking ? <div className="dashboardTimelineEmpty" /> : !isStart ? <div className="dashboardTimelineEmpty dashboardTimelineContinuation">Occupato fino alle {booking.endLabel}</div> : (
-                          <div key={booking.id} className={`dashboardTimelineCard ${isCurrentAppointment(booking.startISO, booking.endISO) ? "dashboardNowCard" : ""}`} style={{ borderLeftColor: getServiceColor(booking.serviceName) }} draggable onDragStart={() => setDraggingBookingId(booking.id)} onDragOver={(e) => e.preventDefault()} onDrop={() => { if (!draggingBookingId || draggingBookingId === booking.id) return; setDashboardOrderIds((prev) => { const ids = [...prev.filter((id) => id !== draggingBookingId)]; const targetIndex = ids.indexOf(booking.id); if (targetIndex === -1) return prev; ids.splice(targetIndex, 0, draggingBookingId); return ids; }); setDraggingBookingId(""); }}>
-                            <div className="dashboardTimelineCardTop"><strong>{booking.customerName}</strong><span className="dashboardChip dashboardChipTime">{booking.startLabel} - {booking.endLabel}</span></div>
-                            <div className="muted">{booking.serviceName}</div>
-                            <div className="bookingActions">{booking.phone && booking.whatsappUrl ? <a className="tabBtn secondaryBtn" href={booking.whatsappUrl} target="_blank">WhatsApp</a> : null}<button type="button" className="tabBtn secondaryBtn" onClick={() => openCalendarView(booking.dateLabel)}>Apri giorno</button><button type="button" className="tabBtn dangerBtn" onClick={() => removeBooking(booking.id)} disabled={deletingId === booking.id}>{deletingId === booking.id ? "Elimino..." : "Elimina"}</button></div>
-                          </div>
-                        )}
+            <div className="grid">
+              <div className="sectionTitle">Dashboard</div>
+              <div className="badge info">Filtra gli appuntamenti per collaboratore oppure visualizza tutto insieme.</div>
+
+              <div className="dashboardFilterRow">
+                <button
+                  type="button"
+                  className={`collabFilterBtn ${dashboardCollaboratorFilter === "all" ? "activeCollabFilter" : ""}`}
+                  onClick={() => setDashboardCollaboratorFilter("all")}
+                >
+                  Tutti gli appuntamenti
+                </button>
+                {collaborators.filter((c) => c.active).map((collaborator, index) => (
+                  <button
+                    key={collaborator.id}
+                    type="button"
+                    className={`collabFilterBtn ${dashboardCollaboratorFilter === collaborator.id ? "activeCollabFilter" : ""}`}
+                    onClick={() => setDashboardCollaboratorFilter(collaborator.id)}
+                    style={{ borderColor: collaboratorColor(collaborator, index), boxShadow: dashboardCollaboratorFilter === collaborator.id ? `0 0 0 2px ${collaboratorColor(collaborator, index)}33 inset` : undefined }}
+                  >
+                    <span className="collabDot" style={{ background: collaboratorColor(collaborator, index) }} />
+                    {collaborator.name}
+                  </button>
+                ))}
+              </div>
+
+              {message && <div className="badge error">{message}</div>}
+              {loading ? (
+                <div className="badge info">Caricamento appuntamenti...</div>
+              ) : filteredDashboardBookings.length === 0 ? (
+                <div className="badge info">Nessun appuntamento trovato per il filtro selezionato.</div>
+              ) : (
+                <div style={{ display: "grid", gap: 10 }}>
+                  {filteredDashboardBookings.map((item) => (
+                    <div
+                      key={`${item.calendarId}-${item.id}`}
+                      style={{
+                        border: "1px solid rgba(255,255,255,0.08)",
+                        borderRadius: 16,
+                        padding: 12,
+                        background: "rgba(255,255,255,0.02)",
+                      }}
+                    >
+                      <div style={{ display: "grid", gridTemplateColumns: "130px 1fr auto", gap: 12, alignItems: "start" }}>
+                        <div style={{ fontSize: 13, lineHeight: 1.4 }}>
+                          <div style={{ fontWeight: 800 }}>{item.startLabel} - {item.endLabel}</div>
+                          <div className="muted" style={{ fontSize: 12 }}>{item.dateLabel}</div>
+                        </div>
+
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 3 }}>{item.customerName}</div>
+                          <div className="muted" style={{ fontSize: 12 }}>{item.serviceName} · €{item.price} · {item.collaboratorName || "—"}</div>
+                          <div className="muted" style={{ fontSize: 12 }}>{item.phone || "Telefono non disponibile"}</div>
+                        </div>
+
+                        <div className="bookingActions" style={{ alignItems: "flex-end", gap: 8 }}>
+                          {item.whatsappUrl && <a className="tabBtn secondaryBtn" href={item.whatsappUrl} target="_blank">WhatsApp</a>}
+                          <button className="tabBtn dangerBtn" onClick={() => removeBooking(item)} disabled={deletingId === item.id}>
+                            {deletingId === item.id ? "Elimino..." : "Elimina"}
+                          </button>
+                        </div>
                       </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        </>
+      )}
+
+{tab === "calendario" && (
+        <>
+          <section className="card">
+            <AdminBookingCalendar
+              services={services.filter((service) => service.active)}
+              collaborators={collaborators.filter((collaborator) => collaborator.active)}
+              onBooked={() => {
+                loadDashboard();
+                loadHistory();
+              }}
+            />
+          </section>
+
+          <section className="card" style={{ marginTop: 16 }}>
+            <div className="grid">
+              <div className="sectionTitle">Ricorrenza</div>
+              {recurringMessage && <div className={`badge ${recurringMessage.includes("creata") ? "ok" : "error"}`}>{recurringMessage}</div>}
+              <div className="gridTwoCols">
+                <div>
+                  <label>Nome cliente</label>
+                  <input value={recurringForm.customerName} onChange={(e) => setRecurringForm({ ...recurringForm, customerName: e.target.value })} />
+                </div>
+                <div>
+                  <label>Telefono</label>
+                  <input value={recurringForm.phone} onChange={(e) => setRecurringForm({ ...recurringForm, phone: e.target.value })} />
+                </div>
+                <div>
+                  <label>Servizio</label>
+                  <select value={recurringForm.serviceId} onChange={(e) => setRecurringForm({ ...recurringForm, serviceId: e.target.value })}>
+                    <option value="">Seleziona servizio</option>
+                    {services.map((service) => <option key={service.id} value={service.id}>{service.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label>Collaboratore</label>
+                  <select value={recurringForm.collaboratorId} onChange={(e) => setRecurringForm({ ...recurringForm, collaboratorId: e.target.value })}>
+                    <option value="">Seleziona collaboratore</option>
+                    {collaborators.map((collaborator) => <option key={collaborator.id} value={collaborator.id}>{collaborator.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label>Data iniziale</label>
+                  <input type="date" value={recurringForm.startDate} onChange={(e) => setRecurringForm({ ...recurringForm, startDate: e.target.value })} />
+                </div>
+                <div>
+                  <label>Orario</label>
+                  <input type="time" value={recurringForm.time} onChange={(e) => setRecurringForm({ ...recurringForm, time: e.target.value })} />
+                </div>
+                <div>
+                  <label>Ripeti ogni</label>
+                  <input type="number" min={1} value={recurringForm.every} onChange={(e) => setRecurringForm({ ...recurringForm, every: Number(e.target.value) || 1 })} />
+                </div>
+                <div>
+                  <label>Unità</label>
+                  <select value={recurringForm.unit} onChange={(e) => setRecurringForm({ ...recurringForm, unit: e.target.value as "days" | "weeks" | "months" })}>
+                    <option value="days">Giorni</option>
+                    <option value="weeks">Settimane</option>
+                    <option value="months">Mesi</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Tipo ricorrenza</label>
+                  <select value={recurringForm.occurrenceMode} onChange={(e) => setRecurringForm({ ...recurringForm, occurrenceMode: e.target.value as "count" | "forever" })}>
+                    <option value="count">Numero appuntamenti</option>
+                    <option value="forever">Per sempre</option>
+                  </select>
+                </div>
+                {recurringForm.occurrenceMode === "count" ? (
+                  <div>
+                    <label>Quanti appuntamenti</label>
+                    <input type="number" min={1} max={240} value={recurringForm.occurrences} onChange={(e) => setRecurringForm({ ...recurringForm, occurrences: Math.max(1, Number(e.target.value) || 1) })} />
+                  </div>
+                ) : (
+                  <div>
+                    <label>Durata serie</label>
+                    <div className="badge info">Per sempre crea automaticamente fino a 240 appuntamenti futuri.</div>
+                  </div>
+                )}
+                <div className="fullRow">
+                  <label>Note</label>
+                  <textarea rows={3} value={recurringForm.notes} onChange={(e) => setRecurringForm({ ...recurringForm, notes: e.target.value })} />
+                </div>
+              </div>
+              <div className="bookingActions">
+                <button className="btn" onClick={createRecurringBookings} disabled={recurringLoading}>{recurringLoading ? "Creazione..." : "Crea appuntamenti ricorrenti"}</button>
+                <button className="tabBtn secondaryBtn" onClick={() => setRecurringForm(emptyRecurring(date))}>Reset</button>
+              </div>
+            </div>
+          </section>
+        </>
+      )}
+
+      {tab === "clienti" && (
+        <section className="card">
+          <div className="grid">
+            <div className="sectionTitle">Clienti</div>
+            {customers.length === 0 ? <div className="badge info">Nessun cliente disponibile.</div> : customers.map((c, i) => (
+              <div key={`${c.phone}-${i}`} className="holidayItem">
+                <div>
+                  <strong>{c.customerName}</strong>
+                  <div className="muted">{c.phone || "Telefono non disponibile"}</div>
+                  <div className="muted">Prenotazioni: {c.totalBookings} · Speso: €{c.totalSpent}</div>
+                </div>
+                <div className="bookingActions">
+                  {c.whatsappUrl && <a className="tabBtn secondaryBtn" href={c.whatsappUrl} target="_blank">WhatsApp</a>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {tab === "storico" && (
+        <section className="card">
+          <div className="grid">
+            <div className="sectionTitle">Storico clienti</div>
+            <div>
+              <label>Cerca cliente</label>
+              <input
+                value={historySearch}
+                onChange={(e) => setHistorySearch(e.target.value)}
+                placeholder="Cerca per nome o telefono"
+              />
+            </div>
+
+            {historyMessage && <div className="badge error">{historyMessage}</div>}
+
+            {historyLoading ? (
+              <div className="badge info">Caricamento storico...</div>
+            ) : historyCustomers.length === 0 ? (
+              <div className="badge info">Nessun cliente trovato nello storico.</div>
+            ) : (
+              <div style={{ display: "grid", gap: 10 }}>
+                {historyCustomers.map((customer) => {
+                  const isOpen = Boolean(expandedHistoryKeys[customer.key]);
+                  return (
+                    <div key={customer.key} className="historyAccordion">
+                      <button
+                        type="button"
+                        className="historyAccordionBtn"
+                        onClick={() => setExpandedHistoryKeys((prev) => ({ ...prev, [customer.key]: !prev[customer.key] }))}
+                      >
+                        <div>
+                          <strong>{customer.customerName}</strong>
+                          <div className="muted">{customer.phone || "Telefono non disponibile"}</div>
+                          <div className="muted">Appuntamenti: {customer.totalBookings} · Speso: €{customer.totalSpent}</div>
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          <div className="muted">{customer.lastDate}</div>
+                          <div className="muted">{isOpen ? "Chiudi" : "Apri"}</div>
+                        </div>
+                      </button>
+
+                      {isOpen && (
+                        <div className="historyAccordionContent">
+                          <div className="historyCustomerMeta">
+                            <div><strong>Cliente:</strong> {customer.customerName}</div>
+                            <div><strong>Telefono:</strong> {customer.phone || "Non disponibile"}</div>
+                            <div><strong>Totale appuntamenti:</strong> {customer.totalBookings}</div>
+                            <div><strong>Speso totale:</strong> €{customer.totalSpent}</div>
+                            {customer.whatsappUrl ? <a className="tabBtn secondaryBtn" href={customer.whatsappUrl} target="_blank">WhatsApp</a> : null}
+                          </div>
+
+                          <div style={{ display: "grid", gap: 10 }}>
+                            {customer.bookings.map((item) => (
+                              <div
+                                key={`${item.calendarId}-${item.id}`}
+                                style={{
+                                  border: "1px solid rgba(255,255,255,0.08)",
+                                  borderRadius: 14,
+                                  padding: 12,
+                                  background: "rgba(255,255,255,0.02)",
+                                }}
+                              >
+                                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                                  <div>
+                                    <strong>{item.serviceName}</strong>
+                                    <div className="muted">{item.dateLabel} · {item.startLabel} - {item.endLabel}</div>
+                                    <div className="muted">Collaboratore: {item.collaboratorName || "—"}</div>
+                                  </div>
+                                  <div style={{ textAlign: "right" }}>
+                                    <strong>€{item.price}</strong>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
               </div>
             )}
-          </section>
-
-          <section className="card">
-            <div className="dashboardSectionHeader"><div className="sectionTitle">Lista appuntamenti</div><div className="dashboardCountBadge">{dashboardBookingsSorted.length}</div></div>
-            {dashboardBookingsSorted.length === 0 ? <div className="badge info">Nessun appuntamento nel periodo selezionato.</div> : <div className="dashboardAppointmentList">{dashboardBookingsSorted.map((booking) => <div key={booking.id} className="dashboardAppointmentCard"><div className="dashboardAppointmentMain"><div className="dashboardAppointmentIdentity"><h3>{booking.customerName}</h3><p>{booking.serviceName}</p></div><div className="dashboardAppointmentChipRow"><span className="dashboardChip dashboardChipTime">{booking.dateLabel}</span><span className="dashboardChip">{booking.startLabel} - {booking.endLabel}</span><span className="dashboardChip">€{Number(booking.price || 0).toFixed(2)}</span></div></div><div className="dashboardAppointmentMeta"><div><span className="dashboardMetaLabel">Telefono</span><strong>{booking.phone || "Non disponibile"}</strong></div><div><span className="dashboardMetaLabel">Note</span><strong>{booking.notes || "Nessuna nota"}</strong></div></div><div className="dashboardAppointmentActions">{booking.whatsappUrl ? <a className="tabBtn secondaryBtn dashboardMiniBtn" href={booking.whatsappUrl} target="_blank">WhatsApp</a> : null}<button type="button" className="tabBtn secondaryBtn dashboardMiniBtn" onClick={() => openCalendarView(booking.dateLabel)}>Calendario</button><button type="button" className="tabBtn dangerBtn dashboardMiniBtn" onClick={() => removeBooking(booking.id)} disabled={deletingId === booking.id}>{deletingId === booking.id ? "Elimino..." : "Elimina"}</button></div></div>)}</div>}
-          </section>
-        </>
-      )}
-
-      {tab === "calendario" && (
-        <section className="adminWebAppMirror">
-          <main className="container">
-            <header className="hero">
-              <div className="logoWrap">
-                {settings.logoUrl && !logoLoadFailed ? (
-                  <img
-                    src={withVersion(settings.logoUrl, brandingVersion)}
-                    alt={settings.brandTitle || "Logo salone"}
-                    style={{ width: 120, height: 120, objectFit: "contain" }}
-                    onError={() => setLogoLoadFailed(true)}
-                  />
-                ) : (
-                  <img
-                    src="/icons/icon-512.png"
-                    width={120}
-                    height={120}
-                    alt={settings.brandTitle || "Logo salone"}
-                    style={{ width: 120, height: 120, objectFit: "contain" }}
-                  />
-                )}
-              </div>
-
-              <div className="brand">
-                <div className="title">{settings.brandTitle || "Ringhio BarberShop"}</div>
-                <p className="subtitle">{settings.brandSubtitle || "Prenota il tuo appuntamento in pochi secondi"}</p>
-              </div>
-            </header>
-
-            <section className="card">
-              <div className="grid">
-                {(calendarMessage || manualBookingMessage || seriesActionMessage) ? (
-                  <div className={`badge ${((manualBookingMessage || calendarMessage || seriesActionMessage).toLowerCase().includes("successo") || (manualBookingMessage || "").toLowerCase().includes("confermata") || (manualBookingMessage || "").toLowerCase().includes("creata")) ? "ok" : "error"}`}>
-                    {manualBookingMessage || calendarMessage || seriesActionMessage}
-                  </div>
-                ) : null}
-
-                <div>
-                  <label>Servizio</label>
-                  {servicesLoading ? (
-                    <div className="badge info">Caricamento servizi...</div>
-                  ) : (
-                    <select
-                      value={manualBooking.serviceId}
-                      onChange={(e) => setManualBooking((prev) => ({ ...prev, serviceId: e.target.value, time: "" }))}
-                    >
-                      {(activeServices.length ? activeServices : services).map((service) => (
-                        <option key={service.id} value={service.id}>
-                          {service.name} ({service.durationMin} min · €{service.price})
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-
-                <div>
-                  <label>Data</label>
-                  <input
-                    type="date"
-                    value={calendarDate}
-                    onChange={(e) => {
-                      setCalendarDate(e.target.value);
-                      setManualBooking((prev) => ({ ...prev, time: "" }));
-                      setCalendarMessage("");
-                      setManualBookingMessage("");
-                      setSeriesActionMessage("");
-                    }}
-                  />
-                </div>
-
-                <div>
-                  <label>Orari disponibili</label>
-                  {calendarLoading ? (
-                    <div className="badge info">Caricamento...</div>
-                  ) : availableCalendarSlots.length === 0 ? (
-                    <div className="badge info">Nessuno slot disponibile</div>
-                  ) : (
-                    <div className="slots">
-                      {availableCalendarSlots.map((slot) => (
-                        <button
-                          key={slot}
-                          type="button"
-                          className={`slot ${manualBooking.time === slot ? "active" : ""}`}
-                          onClick={() => setManualBooking((prev) => ({ ...prev, time: slot }))}
-                        >
-                          {slot}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div>
-                  <label>Nome</label>
-                  <input value={manualBooking.name} onChange={(e) => setManualBooking((prev) => ({ ...prev, name: e.target.value }))} />
-                </div>
-
-                <div>
-                  <label>Telefono</label>
-                  <input value={manualBooking.phone} onChange={(e) => setManualBooking((prev) => ({ ...prev, phone: e.target.value }))} />
-                </div>
-
-                <div>
-                  <label>Note</label>
-                  <textarea rows={3} value={manualBooking.notes} onChange={(e) => setManualBooking((prev) => ({ ...prev, notes: e.target.value }))} />
-                </div>
-
-                <button className="btn" onClick={createManualBooking} disabled={savingManualBooking || !selectedService || !manualBooking.time || !selectedTimeAvailable}>
-                  {savingManualBooking ? "Prenotazione..." : "Conferma prenotazione"}
-                </button>
-              </div>
-            </section>
-
-            <div className="footer">
-              Orari configurati: {hoursLabel(settings)} · intervallo slot {settings?.slotIntervalMin || 15} min ·{" "}
-              <button
-                type="button"
-                className="adminInlineReset"
-                onClick={() => {
-                  setManualBooking((prev) => ({ ...emptyManualBooking(prev.serviceId || selectedService?.id || "") }));
-                  setCalendarMessage("");
-                  setManualBookingMessage("");
-                  setSeriesActionMessage("");
-                }}
-              >
-                Reset calendario
-              </button>
-            </div>
-          </main>
+          </div>
         </section>
       )}
 
-      {tab === "clienti" && <section className="card"><div className="grid"><div className="sectionTitle">Anagrafica clienti</div>{customers.length === 0 ? <div className="badge info">Nessun cliente registrato.</div> : customers.map((customer) => <div key={customer.key} className="holidayItem" style={{ alignItems: "flex-start" }}><div><strong>{customer.customerName}</strong><div className="muted">{customer.phone || "Telefono non disponibile"}</div><div className="muted">Prenotazioni: {customer.totalBookings} · Totale speso: €{customer.totalSpent.toFixed(2)}</div><div className="muted">Ultimi servizi: {customer.servicesHistory.slice(0, 3).map((item) => `${item.date} ${item.service}`).join(" · ") || "Nessuno"}</div></div><div className="bookingActions">{customer.whatsappUrl ? <a className="tabBtn secondaryBtn" href={customer.whatsappUrl} target="_blank">WhatsApp</a> : null}<button type="button" className="tabBtn secondaryBtn" onClick={() => { setHistorySearch(customer.customerName); setTab("storico"); }}>Apri storico</button></div></div>)}</div></section>}
+      {tab === "servizi" && (
+        <section className="card">
+          <div className="grid">
+            <div className="sectionTitle">Servizi</div>
+            {servicesMessage && <div className={`badge ${servicesMessage.includes("successo") ? "ok" : "error"}`}>{servicesMessage}</div>}
+            <div className="gridTwoCols">
+              <div>
+                <label>Nome servizio</label>
+                <input value={serviceForm.name} onChange={(e) => setServiceForm({ ...serviceForm, name: e.target.value })} placeholder="es. Taglio + Barba" />
+              </div>
+              <div>
+                <label>Durata (min)</label>
+                <input type="number" value={serviceForm.durationMin} onChange={(e) => setServiceForm({ ...serviceForm, durationMin: Number(e.target.value) })} />
+              </div>
+              <div>
+                <label>Prezzo (€)</label>
+                <input type="number" value={serviceForm.price} onChange={(e) => setServiceForm({ ...serviceForm, price: Number(e.target.value) })} />
+              </div>
+              <label className="switchRow fullRow"><input type="checkbox" checked={serviceForm.active} onChange={(e) => setServiceForm({ ...serviceForm, active: e.target.checked })} /> Servizio attivo nell'app prenotazioni</label>
+            </div>
+            <div className="bookingActions">
+              <button className="btn" onClick={saveService} disabled={savingService}>{savingService ? "Salvo..." : "Salva servizio"}</button>
+              <button className="tabBtn secondaryBtn" onClick={() => setServiceForm(emptyService())}>Nuovo servizio</button>
+            </div>
 
-      {tab === "storico" && <section className="card"><div className="grid"><div className="sectionTitle">Storico</div><div className="muted historyIntro">Storico completo di tutti i clienti e di tutti i servizi passati.</div><div><label>Cerca nello storico</label><input value={historySearch} onChange={(e) => setHistorySearch(e.target.value)} placeholder="Cerca per nome, telefono o servizio" /></div>{filteredCustomerHistoryGroups.length === 0 ? <div className="badge info">Nessun cliente trovato.</div> : filteredCustomerHistoryGroups.map((customer) => { const isOpen = openHistoryCustomerKey === customer.key; const latestBooking = customer.bookings[0]; return <div key={customer.key} className="historyCard"><button type="button" className={`historyToggle ${isOpen ? "open" : ""}`} onClick={() => setOpenHistoryCustomerKey(isOpen ? null : customer.key)}><div className="historySummary"><strong>{customer.customerName}</strong><div className="muted historySmallText">{customer.phone || "Telefono non disponibile"}</div><div className="muted historySmallText">{customer.totalBookings} appuntamenti · €{customer.totalSpent.toFixed(2)} · Ultimo: {latestBooking ? `${latestBooking.dateLabel} ${latestBooking.startLabel}` : "—"}</div></div><span className="historyArrow">{isOpen ? "−" : "+"}</span></button>{isOpen && <div className="historyDetails"><div className="bookingActions">{customer.whatsappUrl && <a className="tabBtn secondaryBtn" href={customer.whatsappUrl} target="_blank">WhatsApp</a>}</div>{customer.bookings.map((item) => <div key={item.id} className="historyBookingRow"><div className="historyRowText"><strong>{item.serviceName}</strong><div className="muted historySmallText">{item.dateLabel} · {item.startLabel} - {item.endLabel}</div>{item.notes ? <div className="muted historySmallText">Note: {item.notes}</div> : null}</div><div><strong>€{Number(item.price || 0).toFixed(2)}</strong></div></div>)}</div>}</div>; })}</div></section>}
+            <div className="sectionTitle">Elenco servizi</div>
+            {servicesLoading ? <div className="badge info">Caricamento servizi...</div> : services.map((service) => (
+              <div key={service.id} className="holidayItem">
+                <div>
+                  <strong>{service.name}</strong>
+                  <div className="muted">{service.durationMin} min · €{service.price} · {service.active ? "Attivo" : "Disattivato"}</div>
+                </div>
+                <div className="bookingActions">
+                  <button className="tabBtn secondaryBtn" onClick={() => setServiceForm(service)}>Modifica</button>
+                  <button className="tabBtn dangerBtn" onClick={() => removeService(service.id)} disabled={deletingServiceId === service.id}>{deletingServiceId === service.id ? "Elimino..." : "Rimuovi"}</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
-      {tab === "servizi" && <section className="card"><div className="grid"><div className="sectionTitle">Gestione servizi e prezzi</div>{servicesMessage && <div className={`badge ${servicesMessage.includes("successo") ? "ok" : "error"}`}>{servicesMessage}</div>}<div className="gridTwoCols"><div><label>ID servizio (facoltativo)</label><input value={serviceForm.id} onChange={(e) => setServiceForm({ ...serviceForm, id: e.target.value })} placeholder="es. barba_taglio" /></div><div><label>Nome servizio</label><input value={serviceForm.name} onChange={(e) => setServiceForm({ ...serviceForm, name: e.target.value })} placeholder="es. Taglio + Barba" /></div><div><label>Durata (min)</label><input type="number" value={serviceForm.durationMin} onChange={(e) => setServiceForm({ ...serviceForm, durationMin: Number(e.target.value) })} /></div><div><label>Prezzo (€)</label><input type="number" value={serviceForm.price} onChange={(e) => setServiceForm({ ...serviceForm, price: Number(e.target.value) })} /></div><label className="switchRow fullRow"><input type="checkbox" checked={serviceForm.active} onChange={(e) => setServiceForm({ ...serviceForm, active: e.target.checked })} /> Servizio attivo nell'app prenotazioni</label></div><div className="bookingActions"><button type="button" className="btn" onClick={saveService} disabled={savingService}>{savingService ? "Salvo..." : "Salva servizio"}</button><button type="button" className="tabBtn secondaryBtn" onClick={() => setServiceForm(emptyService())}>Nuovo servizio</button></div><div className="sectionTitle">Elenco servizi</div>{servicesLoading ? <div className="badge info">Caricamento servizi...</div> : services.map((service) => <div key={service.id} className="holidayItem"><div><strong>{service.name}</strong><div className="muted">ID: {service.id}</div><div className="muted">{service.durationMin} min · €{service.price} · {service.active ? "Attivo" : "Disattivato"}</div></div><div className="bookingActions"><button type="button" className="tabBtn secondaryBtn" onClick={() => setServiceForm(service)}>Modifica servizio</button><button type="button" className="tabBtn dangerBtn" onClick={() => removeService(service.id)} disabled={deletingServiceId === service.id}>{deletingServiceId === service.id ? "Elimino..." : "Rimuovi"}</button></div></div>)}</div></section>}
+      {tab === "collaboratori" && (
+        <section className="card">
+          <div className="grid">
+            <div className="sectionTitle">Collaboratori</div>
+            
+            {collaboratorsMessage && <div className={`badge ${collaboratorsMessage.includes("successo") ? "ok" : "error"}`}>{collaboratorsMessage}</div>}
+            <div className="gridTwoCols">
+              <div>
+                <label>ID collaboratore (facoltativo)</label>
+                <input value={collaboratorForm.id} onChange={(e) => setCollaboratorForm({ ...collaboratorForm, id: e.target.value })} placeholder="es. marco" />
+              </div>
+              <div>
+                <label>Nome operatore</label>
+                <input value={collaboratorForm.name} onChange={(e) => setCollaboratorForm({ ...collaboratorForm, name: e.target.value })} placeholder="es. Marco" />
+              </div>
+              <label className="switchRow fullRow"><input type="checkbox" checked={collaboratorForm.active} onChange={(e) => setCollaboratorForm({ ...collaboratorForm, active: e.target.checked })} /> Operatore attivo nell'app prenotazioni</label>
+            </div>
+
+            <div className="sectionTitle">Giorni fissi di riposo dell'operatore</div>
+            <div className="checkboxGrid">
+              {WEEKDAYS.map((day) => (
+                <label key={day.value} className="checkCard">
+                  <input type="checkbox" checked={collaboratorForm.weeklyOffDays.includes(day.value)} onChange={() => toggleCollaboratorWeekday(day.value)} /> {day.label}
+                </label>
+              ))}
+            </div>
+
+            <div className="sectionTitle">Orari personalizzati operatore</div>
+            <label className="switchRow"><input type="checkbox" checked={collaboratorForm.morningEnabled} onChange={(e) => setCollaboratorForm({ ...collaboratorForm, morningEnabled: e.target.checked })} /> Attiva fascia mattina</label>
+            <div className="gridTwoCols">
+              <div><label>Apertura mattina</label><input type="time" value={collaboratorForm.morningOpen} onChange={(e) => setCollaboratorForm({ ...collaboratorForm, morningOpen: e.target.value })} /></div>
+              <div><label>Chiusura mattina</label><input type="time" value={collaboratorForm.morningClose} onChange={(e) => setCollaboratorForm({ ...collaboratorForm, morningClose: e.target.value })} /></div>
+            </div>
+            <label className="switchRow"><input type="checkbox" checked={collaboratorForm.afternoonEnabled} onChange={(e) => setCollaboratorForm({ ...collaboratorForm, afternoonEnabled: e.target.checked })} /> Attiva fascia pomeriggio</label>
+            <div className="gridTwoCols">
+              <div><label>Apertura pomeriggio</label><input type="time" value={collaboratorForm.afternoonOpen} onChange={(e) => setCollaboratorForm({ ...collaboratorForm, afternoonOpen: e.target.value })} /></div>
+              <div><label>Chiusura pomeriggio</label><input type="time" value={collaboratorForm.afternoonClose} onChange={(e) => setCollaboratorForm({ ...collaboratorForm, afternoonClose: e.target.value })} /></div>
+            </div>
+
+            <div className="sectionTitle">Ferie / assenze dell'operatore</div>
+            <div className="holidayRow">
+              <div><label>Nuova data ferie</label><input type="date" value={newCollaboratorHoliday} onChange={(e) => setNewCollaboratorHoliday(e.target.value)} /></div>
+              <button className="btn" onClick={addCollaboratorHoliday}>Aggiungi</button>
+            </div>
+            <div className="holidayList">
+              {collaboratorForm.holidays.length === 0 ? <div className="badge info">Nessuna ferie/assenza impostata.</div> : collaboratorForm.holidays.map((holiday) => (
+                <div key={holiday} className="holidayItem">
+                  <strong>{holiday}</strong>
+                  <button className="miniDangerBtn" onClick={() => setCollaboratorForm({ ...collaboratorForm, holidays: collaboratorForm.holidays.filter((d) => d !== holiday) })}>Rimuovi</button>
+                </div>
+              ))}
+            </div>
+
+            <div className="bookingActions">
+              <button className="btn" onClick={saveCollaborator} disabled={savingCollaborator || !collaboratorForm.id}>{savingCollaborator ? "Salvo..." : "Salva operatore"}</button>
+              <button className="tabBtn secondaryBtn" disabled>Gestionale 1 operatore</button>
+            </div>
+
+            <div className="sectionTitle">Operatore</div>
+            {collaboratorsLoading ? <div className="badge info">Caricamento collaboratori...</div> : collaborators.map((collaborator) => (
+              <div key={collaborator.id} className="holidayItem">
+                <div>
+                  <strong>{collaborator.name}</strong>
+                  <div className="muted">Riposo settimanale: {collaborator.weeklyOffDays.length ? WEEKDAYS.filter((day) => collaborator.weeklyOffDays.includes(day.value)).map((day) => day.label).join(", ") : "nessuno"}</div>
+                  <div className="muted">Ferie impostate: {collaborator.holidays.length}</div>
+                  <div className="muted">Mattina: {collaborator.morningEnabled ? `${collaborator.morningOpen}-${collaborator.morningClose}` : "off"} · Pomeriggio: {collaborator.afternoonEnabled ? `${collaborator.afternoonOpen}-${collaborator.afternoonClose}` : "off"}</div>
+                  <div className="muted">{collaborator.active ? "Attivo" : "Disattivato"}</div>
+                </div>
+                <div className="bookingActions">
+                  <button className="tabBtn secondaryBtn" onClick={() => { setCollaboratorForm(collaborator); setNewCollaboratorHoliday(""); }}>Modifica</button>
+                  <button className="tabBtn dangerBtn" onClick={() => removeCollaborator(collaborator.id)} disabled={deletingCollaboratorId === collaborator.id || collaborators.length <= 1}>{deletingCollaboratorId === collaborator.id ? "Elimino..." : "Rimuovi"}</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {tab === "impostazioni" && (
         <section className="card">
           <div className="grid">
-            <div className="sectionTitle">Impostazioni operative</div>
+            <div className="sectionTitle">Impostazioni</div>
             {settingsMessage && <div className={`badge ${settingsMessage.includes("salvate") ? "ok" : "error"}`}>{settingsMessage}</div>}
-            {settingsLoading ? (
-              <div className="badge info">Caricamento impostazioni...</div>
-            ) : (
+            {settingsLoading ? <div className="badge info">Caricamento impostazioni...</div> : (
               <>
-                <div className="gridTwoCols">
-                  <div>
-                    <label>Nome web app</label>
-                    <input value={settings.brandTitle} onChange={(e) => setSettings({ ...settings, brandTitle: e.target.value })} placeholder="Es. Ringhio BarberShop" />
-                  </div>
-                  <div>
-                    <label>Sottotitolo web app</label>
-                    <input value={settings.brandSubtitle} onChange={(e) => setSettings({ ...settings, brandSubtitle: e.target.value })} placeholder="Es. Prenota il tuo appuntamento in pochi secondi" />
-                  </div>
-                  <div>
-                    <label>Intervallo slot</label>
-                    <select value={settings.slotIntervalMin} onChange={(e) => setSettings({ ...settings, slotIntervalMin: Number(e.target.value) as 15 | 30 })}>
-                      <option value={15}>15 minuti</option>
-                      <option value={30}>30 minuti</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label>Anticipo minimo prenotazione</label>
-                    <input type="number" value={settings.minAdvanceMin} onChange={(e) => setSettings({ ...settings, minAdvanceMin: Number(e.target.value) })} />
-                  </div>
+                <div>
+                  <label>Intervallo slot</label>
+                  <select value={settings.slotIntervalMin} onChange={(e) => setSettings({ ...settings, slotIntervalMin: Number(e.target.value) as 15 | 30 })}>
+                    <option value={15}>15 minuti</option>
+                    <option value={30}>30 minuti</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label>Anticipo minimo prenotazione web app (minuti)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={15}
+                    value={settings.minAdvanceMin}
+                    onChange={(e) => setSettings({ ...settings, minAdvanceMin: Math.max(0, Number(e.target.value) || 0) })}
+                  />
                 </div>
 
                 <div className="sectionTitle">Giorni di chiusura</div>
@@ -1152,53 +1374,115 @@ export default function GestionalePage() {
                 </div>
 
                 <div className="sectionTitle">Orari mattina</div>
-                <label className="switchRow">
-                  <input type="checkbox" checked={settings.morningEnabled} onChange={(e) => setSettings({ ...settings, morningEnabled: e.target.checked })} /> Attiva fascia mattina
-                </label>
+                <label className="switchRow"><input type="checkbox" checked={settings.morningEnabled} onChange={(e) => setSettings({ ...settings, morningEnabled: e.target.checked })} /> Attiva fascia mattina</label>
                 <div className="gridTwoCols">
-                  <div>
-                    <label>Apertura mattina</label>
-                    <input type="time" value={settings.morningOpen} onChange={(e) => setSettings({ ...settings, morningOpen: e.target.value })} />
-                  </div>
-                  <div>
-                    <label>Chiusura mattina</label>
-                    <input type="time" value={settings.morningClose} onChange={(e) => setSettings({ ...settings, morningClose: e.target.value })} />
-                  </div>
+                  <div><label>Apertura mattina</label><input type="time" value={settings.morningOpen} onChange={(e) => setSettings({ ...settings, morningOpen: e.target.value })} /></div>
+                  <div><label>Chiusura mattina</label><input type="time" value={settings.morningClose} onChange={(e) => setSettings({ ...settings, morningClose: e.target.value })} /></div>
                 </div>
 
                 <div className="sectionTitle">Orari pomeriggio</div>
-                <label className="switchRow">
-                  <input type="checkbox" checked={settings.afternoonEnabled} onChange={(e) => setSettings({ ...settings, afternoonEnabled: e.target.checked })} /> Attiva fascia pomeriggio
-                </label>
+                <label className="switchRow"><input type="checkbox" checked={settings.afternoonEnabled} onChange={(e) => setSettings({ ...settings, afternoonEnabled: e.target.checked })} /> Attiva fascia pomeriggio</label>
                 <div className="gridTwoCols">
-                  <div>
-                    <label>Apertura pomeriggio</label>
-                    <input type="time" value={settings.afternoonOpen} onChange={(e) => setSettings({ ...settings, afternoonOpen: e.target.value })} />
-                  </div>
-                  <div>
-                    <label>Chiusura pomeriggio</label>
-                    <input type="time" value={settings.afternoonClose} onChange={(e) => setSettings({ ...settings, afternoonClose: e.target.value })} />
-                  </div>
+                  <div><label>Apertura pomeriggio</label><input type="time" value={settings.afternoonOpen} onChange={(e) => setSettings({ ...settings, afternoonOpen: e.target.value })} /></div>
+                  <div><label>Chiusura pomeriggio</label><input type="time" value={settings.afternoonClose} onChange={(e) => setSettings({ ...settings, afternoonClose: e.target.value })} /></div>
                 </div>
 
                 <div className="sectionTitle">Ferie / chiusure straordinarie</div>
                 <div className="holidayRow">
-                  <div>
-                    <label>Nuova data di chiusura</label>
-                    <input type="date" value={newHoliday} onChange={(e) => setNewHoliday(e.target.value)} />
-                  </div>
-                  <button type="button" className="btn" onClick={addHoliday}>Aggiungi</button>
+                  <div><label>Nuova data di chiusura</label><input type="date" value={newHoliday} onChange={(e) => setNewHoliday(e.target.value)} /></div>
+                  <button className="btn" onClick={addHoliday}>Aggiungi</button>
                 </div>
                 <div className="holidayList">
-                  {settings.holidays.length === 0 ? <div className="badge info">Nessuna chiusura straordinaria.</div> : settings.holidays.map((holiday) => <div key={holiday} className="holidayItem"><strong>{holiday}</strong><button type="button" className="miniDangerBtn" onClick={() => setSettings({ ...settings, holidays: settings.holidays.filter((d) => d !== holiday) })}>Rimuovi data</button></div>)}
+                  {settings.holidays.length === 0 ? <div className="badge info">Nessuna chiusura straordinaria.</div> : settings.holidays.map((holiday) => (
+                    <div key={holiday} className="holidayItem">
+                      <strong>{holiday}</strong>
+                      <button className="miniDangerBtn" onClick={() => setSettings({ ...settings, holidays: settings.holidays.filter((d) => d !== holiday) })}>Rimuovi</button>
+                    </div>
+                  ))}
                 </div>
-                <button type="button" className="btn" onClick={saveSettings} disabled={savingSettings}>{savingSettings ? "Salvataggio..." : "Salva impostazioni"}</button>
+
+                <button className="btn" onClick={saveSettings} disabled={savingSettings}>{savingSettings ? "Salvataggio..." : "Salva impostazioni"}</button>
               </>
             )}
           </div>
         </section>
       )}
+      <style jsx>{`
+        .dashboardFilterRow {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 10px;
+        }
+        .collabFilterBtn {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          min-height: 44px;
+          padding: 10px 14px;
+          border-radius: 999px;
+          border: 1px solid rgba(255,255,255,0.14);
+          background: rgba(255,255,255,0.03);
+          color: #fff;
+          cursor: pointer;
+          transition: 0.2s ease;
+        }
+        .collabFilterBtn:hover,
+        .activeCollabFilter {
+          background: rgba(255,255,255,0.08);
+          border-color: rgba(255,255,255,0.28);
+        }
+        .collabDot {
+          width: 10px;
+          height: 10px;
+          border-radius: 999px;
+          display: inline-block;
+        }
+        .historyAccordion {
+          border: 1px solid rgba(255,255,255,0.08);
+          border-radius: 16px;
+          overflow: hidden;
+          background: rgba(255,255,255,0.02);
+        }
+        .historyAccordionBtn {
+          width: 100%;
+          display: flex;
+          justify-content: space-between;
+          gap: 16px;
+          text-align: left;
+          padding: 14px;
+          border: 0;
+          background: transparent;
+          color: #fff;
+          cursor: pointer;
+        }
+        .historyAccordionContent {
+          padding: 0 14px 14px;
+          display: grid;
+          gap: 12px;
+        }
+        .historyCustomerMeta {
+          display: grid;
+          gap: 8px;
+          padding: 12px;
+          border-radius: 14px;
+          background: rgba(255,255,255,0.04);
+        }
+        @media (max-width: 860px) {
+          .statsRow {
+            grid-template-columns: 1fr 1fr;
+          }
+        }
+        @media (max-width: 640px) {
+          .statsRow {
+            grid-template-columns: 1fr;
+          }
+          .historyAccordionBtn {
+            flex-direction: column;
+            align-items: flex-start;
+          }
+        }
+      `}</style>
 
     </main>
-    );
-  }
+  );
+}

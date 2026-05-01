@@ -2,85 +2,125 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 import { NextResponse } from "next/server";
-import { DateTime } from "luxon";
-import { getServiceById } from "@/lib/services";
-import {
-  fitsInsideWorkingWindows,
-  isAtLeastMinutesAhead,
-  isClosedDate,
-  readBusinessSettings,
-  TIME_ZONE,
-} from "@/lib/business-settings";
-import { createBooking, listBookingsForDate } from "@/lib/bookings";
-
-function overlaps(startA: DateTime, endA: DateTime, startB: DateTime, endB: DateTime) {
-  return startA.toMillis() < endB.toMillis() && endA.toMillis() > startB.toMillis();
-}
+import { buildGroupBookingPlan, createSingleBooking } from "@/lib/booking-engine";
 
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { name, phone, date, time, serviceId, notes } = body ?? {};
+    const {
+      name,
+      phone,
+      date,
+      time,
+      serviceId,
+      collaboratorId,
+      preferredCollaboratorId,
+      notes,
+      peopleCount,
+      customerNames,
+      adminBypassMinAdvance,
+    } = body ?? {};
 
     if (!name || !phone || !date || !time || !serviceId) {
       return NextResponse.json({ error: "Dati mancanti" }, { status: 400 });
     }
 
-    const normalizedServiceId = String(serviceId).trim().toLowerCase();
-    const service = await getServiceById(normalizedServiceId);
+    const normalizedPreferredCollaboratorId = String(
+      preferredCollaboratorId || collaboratorId || ""
+    )
+      .trim()
+      .toLowerCase();
 
-    if (!service || !service.active) {
-      return NextResponse.json({ error: `Servizio non valido: ${serviceId}` }, { status: 400 });
-    }
+    const totalPeople = 1;
+    const bypassMinAdvance = Boolean(adminBypassMinAdvance);
 
-    const settings = await readBusinessSettings();
+    const namesFromList = Array.isArray(customerNames)
+      ? customerNames.map((item) => String(item || "").trim()).filter(Boolean)
+      : [];
 
-    if (isClosedDate(date, settings)) {
-      return NextResponse.json({ error: "Il salone è chiuso in questa data" }, { status: 400 });
-    }
+    const attendeeNames =
+      totalPeople === 1
+        ? [String(name).trim()]
+        : Array.from(
+            { length: totalPeople },
+            (_, index) => namesFromList[index] || `${String(name).trim()} (${index + 1})`
+          );
 
-    const start = DateTime.fromISO(`${date}T${time}`, { zone: TIME_ZONE });
-    const end = start.plus({ minutes: service.durationMin });
-
-    if (!start.isValid || !end.isValid) {
-      return NextResponse.json({ error: "Data o orario non validi" }, { status: 400 });
-    }
-
-    if (!isAtLeastMinutesAhead(start.toISO()!, settings.minAdvanceMin)) {
-      return NextResponse.json({ error: `Puoi prenotare solo almeno ${settings.minAdvanceMin} minuti prima` }, { status: 400 });
-    }
-
-    if (!fitsInsideWorkingWindows(date, time, service.durationMin, settings)) {
-      return NextResponse.json({ error: "L'orario scelto è fuori dagli orari di apertura configurati" }, { status: 400 });
-    }
-
-    const dayBookings = await listBookingsForDate(date);
-    const hasDbOverlap = dayBookings.some((booking) => {
-      const bookingStart = DateTime.fromISO(booking.startISO, { zone: TIME_ZONE });
-      const bookingEnd = DateTime.fromISO(booking.endISO, { zone: TIME_ZONE });
-      return overlaps(start, end, bookingStart, bookingEnd);
-    });
-
-    if (hasDbOverlap) {
-      return NextResponse.json({ error: "Questo orario non è più disponibile" }, { status: 409 });
-    }
-
-    const booking = await createBooking({
-      name: String(name).trim(),
-      phone: String(phone).trim(),
+    const planned = await buildGroupBookingPlan({
       date: String(date),
-      time: String(time),
-      serviceId: normalizedServiceId,
-      notes: String(notes || "").trim(),
+      startTime: String(time),
+      serviceId: String(serviceId).trim().toLowerCase(),
+      peopleCount: totalPeople,
+      preferredCollaboratorId: normalizedPreferredCollaboratorId || null,
+      ignoreMinAdvance: bypassMinAdvance,
     });
 
-    return NextResponse.json({ success: true, bookingId: booking.id, googleEventId: null });
+    if (!planned || planned.plan.length < totalPeople) {
+      return NextResponse.json(
+        {
+          error:
+            normalizedPreferredCollaboratorId
+              ? "Non ci sono abbastanza slot consecutivi disponibili per il collaboratore selezionato"
+              : "Non ci sono abbastanza slot disponibili per questa prenotazione di gruppo",
+        },
+        { status: 409 }
+      );
+    }
+
+    const groupLabel =
+      totalPeople > 1 ? `${attendeeNames.join(", ")} · ${totalPeople} persone` : "";
+
+    const created: Array<{
+      eventId: string;
+      collaboratorId: string;
+      collaboratorName: string;
+      customerName: string;
+      time: string;
+    }> = [];
+
+    for (let index = 0; index < totalPeople; index += 1) {
+      const assignment = planned.plan[index];
+
+      const booking = await createSingleBooking({
+        name: attendeeNames[index],
+        phone: String(phone).trim(),
+        date: String(date),
+        time: assignment.time,
+        serviceId: String(serviceId).trim().toLowerCase(),
+        collaboratorId: assignment.collaborator.id,
+        notes: String(notes || "").trim(),
+        groupLabel,
+        ignoreMinAdvance: bypassMinAdvance,
+      });
+
+      created.push({
+        eventId: booking.eventId,
+        collaboratorId: assignment.collaborator.id,
+        collaboratorName: assignment.collaborator.name,
+        customerName: attendeeNames[index],
+        time: assignment.time,
+      });
+    }
+
+    return NextResponse.json({
+      success: true,
+      eventId: created[0]?.eventId || "",
+      bookingIds: created.map((item) => item.eventId),
+      bookings: created,
+      peopleCount: totalPeople,
+      preferredCollaboratorId: normalizedPreferredCollaboratorId,
+    });
   } catch (error: any) {
-    console.error("Booking error in /api/book:", error);
+    console.error("Booking error in /api/book:", {
+      message: error?.message,
+      stack: error?.stack,
+      response: error?.response?.data,
+    });
+
     return NextResponse.json(
       {
-        error: "Errore durante la prenotazione",
-        details: error?.message || "Errore sconosciuto",
+        error: error?.message || "Errore durante la prenotazione",
+        details: error?.response?.data || error?.message || "Errore sconosciuto",
       },
       { status: 500 }
     );

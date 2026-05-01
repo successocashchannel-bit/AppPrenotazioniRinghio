@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 type Service = { id: string; name: string; durationMin: number; price: number; active: boolean };
 type Collaborator = { id: string; name: string; active: boolean; calendarId?: string };
@@ -54,22 +54,23 @@ function hoursLabel(settings?: Settings | null) {
   if (!settings) return "Caricamento orari...";
 
   const parts: string[] = [];
-  if (settings.morningEnabled) {
-    parts.push(`Mattina ${settings.morningOpen}-${settings.morningClose}`);
-  }
-  if (settings.afternoonEnabled) {
-    parts.push(`Pomeriggio ${settings.afternoonOpen}-${settings.afternoonClose}`);
-  }
-
+  if (settings.morningEnabled) parts.push(`Mattina ${settings.morningOpen}-${settings.morningClose}`);
+  if (settings.afternoonEnabled) parts.push(`Pomeriggio ${settings.afternoonOpen}-${settings.afternoonClose}`);
   return parts.join(" · ");
 }
 
-export default function HomePage() {
-  const router = useRouter();
+export default function GestionaleCalendarioPage() {
+  const [authenticated, setAuthenticated] = useState<boolean | null>(null);
+  const [username, setUsername] = useState("admin");
+  const [password, setPassword] = useState("admin");
+  const [loginError, setLoginError] = useState("");
+  const [loginLoading, setLoginLoading] = useState(false);
+
   const [services, setServices] = useState<Service[]>([]);
   const [servicesLoading, setServicesLoading] = useState(true);
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
   const [collaboratorsLoading, setCollaboratorsLoading] = useState(true);
+
   const [serviceId, setServiceId] = useState("");
   const [preferredCollaboratorId, setPreferredCollaboratorId] = useState("");
   const [date, setDate] = useState(todayISO());
@@ -78,6 +79,7 @@ export default function HomePage() {
   const [selected, setSelected] = useState("");
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [booking, setBooking] = useState(false);
+
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [groupNamesText, setGroupNamesText] = useState("");
@@ -88,6 +90,12 @@ export default function HomePage() {
   const latestSlotsKeyRef = useRef("");
 
   useEffect(() => {
+    checkAuth();
+  }, []);
+
+  useEffect(() => {
+    if (!authenticated) return;
+
     async function loadInitialData() {
       try {
         const [servicesRes, collaboratorsRes] = await Promise.all([
@@ -98,10 +106,8 @@ export default function HomePage() {
         const servicesData = await safeJson<{ ok: boolean; services: Service[] }>(servicesRes);
         const collaboratorsData = await safeJson<{ ok: boolean; collaborators: Collaborator[] }>(collaboratorsRes);
 
-        const loadedCollaborators = collaboratorsData.collaborators || [];
         setServices(servicesData.services || []);
-        setCollaborators(loadedCollaborators);
-        setPreferredCollaboratorId((prev) => prev || loadedCollaborators[0]?.id || "");
+        setCollaborators(collaboratorsData.collaborators || []);
         setServiceId((prev) => prev || servicesData.services?.[0]?.id || "");
       } catch (e: any) {
         setMessage(e?.message || "Errore caricamento dati iniziali");
@@ -112,30 +118,16 @@ export default function HomePage() {
     }
 
     loadInitialData();
-  }, []);
-
-  const service = useMemo(
-    () => services.find((s) => s.id === serviceId) || null,
-    [services, serviceId]
-  );
-
-  const preferredCollaborator = useMemo(
-    () => collaborators.find((c) => c.id === preferredCollaboratorId) || null,
-    [collaborators, preferredCollaboratorId]
-  );
-
-  const parsedGroupNames = useMemo(
-    () => groupNamesText.split("\n").map((item) => item.trim()).filter(Boolean),
-    [groupNamesText]
-  );
+  }, [authenticated]);
 
   useEffect(() => {
-    if (!serviceId) return;
+    if (!authenticated || !serviceId) return;
 
     const qs = new URLSearchParams({
       date,
       serviceId,
       peopleCount: String(peopleCount),
+      adminBypassMinAdvance: "1",
     });
 
     if (preferredCollaboratorId) {
@@ -182,20 +174,55 @@ export default function HomePage() {
     return () => {
       if (slotsDebounceRef.current) clearTimeout(slotsDebounceRef.current);
     };
-  }, [date, serviceId, preferredCollaboratorId, peopleCount]);
+  }, [authenticated, date, serviceId, preferredCollaboratorId, peopleCount]);
 
-const selectedService = useMemo(
-  () => services.find((s) => s.id === serviceId) || null,
-  [services, serviceId]
-);
+  const service = useMemo(
+    () => services.find((s) => s.id === serviceId) || null,
+    [services, serviceId]
+  );
+
+  const preferredCollaborator = useMemo(
+    () => collaborators.find((c) => c.id === preferredCollaboratorId) || null,
+    [collaborators, preferredCollaboratorId]
+  );
+
+  const parsedGroupNames = useMemo(
+    () => groupNamesText.split("\n").map((item) => item.trim()).filter(Boolean),
+    [groupNamesText]
+  );
+
+  async function checkAuth() {
+    try {
+      const res = await fetch("/api/admin/me", { cache: "no-store" });
+      const data = await safeJson<{ ok: boolean; authenticated: boolean }>(res);
+      setAuthenticated(Boolean(data.authenticated));
+    } catch {
+      setAuthenticated(false);
+    }
+  }
+
+  async function login() {
+    setLoginLoading(true);
+    setLoginError("");
+
+    try {
+      const res = await fetch("/api/admin/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+
+      await safeJson(res);
+      setAuthenticated(true);
+    } catch (e: any) {
+      setLoginError(e?.message || "Errore login");
+    } finally {
+      setLoginLoading(false);
+    }
+  }
 
   async function submit() {
     setMessage("");
-
-    if (!selectedService) {
-      setMessage("Seleziona un servizio.");
-      return;
-    }
 
     if (!selected) {
       setMessage("Seleziona un orario.");
@@ -226,8 +253,10 @@ const selectedService = useMemo(
           time: selected,
           name: name.trim(),
           phone: phone.trim(),
+          notes: "",
           peopleCount,
           customerNames: peopleCount > 1 ? parsedGroupNames : [name.trim()],
+          adminBypassMinAdvance: true,
         }),
       }).then(safeJson<BookResponse>);
 
@@ -237,16 +266,36 @@ const selectedService = useMemo(
           .join(" | ") ||
         (preferredCollaborator?.name || collaborators[0]?.name || "Operatore");
 
-      const params = new URLSearchParams({
-        service: selectedService?.name || "Servizio",
-        collaborator: collaboratorSummary,
+      setMessage(
+        peopleCount > 1
+          ? `Prenotazione creata. ${collaboratorSummary}`
+          : `Prenotazione creata con successo. Collaboratore: ${collaboratorSummary}`
+      );
+
+      setSelected("");
+      setName("");
+      setPhone("");
+      setGroupNamesText("");
+
+      const qs = new URLSearchParams({
         date,
-        time: selected,
-        name: peopleCount > 1 ? `${name.trim()} + gruppo` : name.trim(),
-        durationMin: String(selectedService?.durationMin || 0),
+        serviceId,
+        peopleCount: String(peopleCount),
+        adminBypassMinAdvance: "1",
       });
 
-      router.push(`/conferma?${params.toString()}`);
+      if (preferredCollaboratorId) {
+        qs.set("preferredCollaboratorId", preferredCollaboratorId);
+        qs.set("collaboratorId", preferredCollaboratorId);
+      }
+
+      const requestKey = qs.toString();
+      const res = await fetch(`/api/slots?${requestKey}`);
+      const slotsData = await safeJson<SlotsResponse>(res);
+      const nextState = { slots: slotsData.slots || [], settings: slotsData.settings || null };
+      slotsCacheRef.current.set(requestKey, nextState);
+      setSlots(nextState.slots);
+      setSettings(nextState.settings);
     } catch (e: any) {
       setMessage(e?.message || "Errore prenotazione");
     } finally {
@@ -254,18 +303,67 @@ const selectedService = useMemo(
     }
   }
 
+  if (authenticated === null) {
+    return <main className="container"><div className="card"><div className="badge info">Caricamento calendario gestionale...</div></div></main>;
+  }
+
+  if (!authenticated) {
+    return (
+      <main className="container" style={{ maxWidth: 460 }}>
+        <header className="hero">
+          <div className="brand">
+            <div className="title">Accesso admin</div>
+            <p className="subtitle">Entra per usare il calendario manuale del gestionale</p>
+          </div>
+        </header>
+
+        <section className="card">
+          <div className="grid">
+            {loginError && <div className="badge error">{loginError}</div>}
+
+            <div>
+              <label>Username</label>
+              <input value={username} onChange={(e) => setUsername(e.target.value)} />
+            </div>
+
+            <div>
+              <label>Password</label>
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            </div>
+
+            <button className="btn" onClick={login} disabled={loginLoading}>
+              {loginLoading ? "Accesso..." : "Accedi"}
+            </button>
+
+            <Link href="/gestionale" className="tabBtn" style={{ textAlign: "center" }}>
+              Torna al gestionale
+            </Link>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="container">
-<header className="hero">
-  <div className="brand">
-    <div className="title">Prenotazioni Online</div>
-    <p className="subtitle">Prenota il tuo appuntamento in pochi secondi</p>
-  </div>
-</header>
+      <header className="hero leftHero" style={{ marginBottom: 18 }}>
+        <div className="brand leftBrand" style={{ width: "100%" }}>
+          <div className="title">Calendario gestionale</div>
+                  </div>
+      </header>
+
+      <section className="card" style={{ marginBottom: 18 }}>
+        <div className="tabRow" style={{ justifyContent: "space-between", alignItems: "center" }}>
+          <div className="tabRow">
+            <Link href="/gestionale" className="tabBtn">Dashboard</Link>
+            <Link href="/gestionale/calendario" className="tabBtn activeTab">Calendario</Link>
+          </div>
+        </div>
+      </section>
 
       <section className="card">
         <div className="grid">
-          {message && <div className="badge error">{message}</div>}
+          {message && <div className={message.toLowerCase().includes("errore") ? "badge error" : "badge ok"}>{message}</div>}
 
           <div>
             <label>Numero persone</label>
@@ -358,15 +456,11 @@ const selectedService = useMemo(
             </div>
           )}
 
-
-          <button className="btn" onClick={submit} disabled={booking || !selectedService}>
+          <button className="btn" onClick={submit} disabled={booking || !service}>
             {booking ? "Prenotazione in corso..." : peopleCount > 1 ? `Prenota per ${peopleCount} persone` : "Prenota ora"}
           </button>
 
           <div className="badge info">Orari: {hoursLabel(settings)}</div>
-          <div className="badge info">
-            Gestionale configurato per 1 solo operatore.
-          </div>
         </div>
       </section>
     </main>

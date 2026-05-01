@@ -1,1 +1,0 @@
-Versione stabile definitiva: gestionale senza notifiche fragili runtime, web app con bottone Installa App corretto.

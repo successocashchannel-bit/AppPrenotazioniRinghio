@@ -2,73 +2,111 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 import { NextResponse } from "next/server";
-import { DateTime } from "luxon";
 import { getServiceById } from "@/lib/services";
+import { getCollaboratorById } from "@/lib/collaborators";
 import {
-  fitsInsideWorkingWindows,
-  generateCandidateSlots,
-  isAtLeastMinutesAhead,
-  isClosedDate,
   readBusinessSettings,
-  TIME_ZONE,
+  isClosedDate,
+  serializeBusinessSettings,
 } from "@/lib/business-settings";
-import { listBookingsForDate } from "@/lib/bookings";
-
-function overlaps(startA: DateTime, endA: DateTime, startB: DateTime, endB: DateTime) {
-  return startA.toMillis() < endB.toMillis() && endA.toMillis() > startB.toMillis();
-}
+import { getAvailableGroupSlots } from "@/lib/booking-engine";
 
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
+
     const date = String(searchParams.get("date") || "").trim();
     const rawServiceId = String(searchParams.get("serviceId") || "").trim();
+    const rawCollaboratorId = String(searchParams.get("collaboratorId") || "").trim();
+    const rawPreferredCollaboratorId = String(
+      searchParams.get("preferredCollaboratorId") || ""
+    ).trim();
+    const adminBypassMinAdvance = ["1", "true", "yes"].includes(
+      String(searchParams.get("adminBypassMinAdvance") || "").trim().toLowerCase()
+    );
+
+    const peopleCount = Math.max(
+      1,
+      Math.min(5, Number(searchParams.get("peopleCount") || 1) || 1)
+    );
 
     if (!date || !rawServiceId) {
       return NextResponse.json({ error: "Parametri mancanti" }, { status: 400 });
     }
 
     const serviceId = rawServiceId.toLowerCase();
-    const [service, settings] = await Promise.all([
+    const collaboratorId = rawCollaboratorId.toLowerCase();
+    const preferredCollaboratorId = String(
+      rawPreferredCollaboratorId || collaboratorId || ""
+    )
+      .trim()
+      .toLowerCase();
+
+    const [service, settings, collaborator] = await Promise.all([
       getServiceById(serviceId),
       readBusinessSettings(),
+      collaboratorId ? getCollaboratorById(collaboratorId) : Promise.resolve(null),
     ]);
 
     if (!service || !service.active) {
-      return NextResponse.json({ error: `Servizio non valido: ${rawServiceId}` }, { status: 400 });
+      return NextResponse.json(
+        { error: `Servizio non valido: ${rawServiceId}` },
+        { status: 400 }
+      );
+    }
+
+    if (collaboratorId && (!collaborator || !collaborator.active)) {
+      return NextResponse.json(
+        { error: `Collaboratore non valido: ${rawCollaboratorId}` },
+        { status: 400 }
+      );
     }
 
     if (isClosedDate(date, settings)) {
-      return NextResponse.json({ date, serviceId, slots: [], closed: true, googleOk: false, settings });
+      return NextResponse.json({
+        date,
+        serviceId,
+        collaboratorId,
+        preferredCollaboratorId,
+        peopleCount,
+        slots: [],
+        slotsDetailed: [],
+        closed: true,
+        googleOk: true,
+        settings: serializeBusinessSettings(settings),
+      });
     }
 
-    const dayBookings = await listBookingsForDate(date);
-    const busy = dayBookings.map((booking) => ({
-      start: DateTime.fromISO(booking.startISO, { zone: TIME_ZONE }),
-      end: DateTime.fromISO(booking.endISO, { zone: TIME_ZONE }),
-    }));
-
-    const candidates = generateCandidateSlots(date, settings);
-
-    const validSlots = candidates.filter((slot) => {
-      const slotStart = DateTime.fromISO(`${date}T${slot}`, { zone: TIME_ZONE });
-      const slotEnd = slotStart.plus({ minutes: service.durationMin });
-
-      if (!slotStart.isValid || !slotEnd.isValid) return false;
-      if (!isAtLeastMinutesAhead(slotStart.toISO()!, settings.minAdvanceMin)) return false;
-      if (!fitsInsideWorkingWindows(date, slot, service.durationMin, settings)) return false;
-
-      const hasOverlap = busy.some((event) => overlaps(slotStart, slotEnd, event.start, event.end));
-      return !hasOverlap;
+    const result = await getAvailableGroupSlots({
+      date,
+      serviceId,
+      peopleCount,
+      preferredCollaboratorId: preferredCollaboratorId || null,
+      ignoreMinAdvance: adminBypassMinAdvance,
     });
 
-    return NextResponse.json({ date, serviceId, slots: validSlots, googleOk: false, settings });
+    return NextResponse.json({
+      date,
+      serviceId,
+      collaboratorId,
+      preferredCollaboratorId,
+      peopleCount,
+      slots: result.slots.map((slot) => slot.time),
+      slotsDetailed: result.slots,
+      googleOk: true,
+      settings: serializeBusinessSettings(result.settings),
+    });
   } catch (error: any) {
-    console.error("Slots error in /api/slots:", error);
+    console.error("Collaborator slots error in /api/slots:", {
+      message: error?.message,
+      stack: error?.stack,
+      response: error?.response?.data,
+    });
+
     return NextResponse.json(
       {
-        error: "Errore nel recupero slot",
-        details: error?.message || "Errore sconosciuto",
+        error: error?.message || "Errore nel recupero slot",
+        details: error?.response?.data || error?.message || "Errore sconosciuto",
         googleOk: false,
       },
       { status: 500 }

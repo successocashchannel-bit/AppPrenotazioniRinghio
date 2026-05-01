@@ -1,23 +1,37 @@
 {
-  "barba": {
-    "id": "barba",
-    "name": "Barba",
-    "durationMin": 15,
-    "price": 5,
-    "active": true
-  },
-  "taglio": {
-    "id": "taglio",
-    "name": "Taglio",
-    "durationMin": 30,
-    "price": 10,
-    "active": true
-  },
-  "barba_taglio": {
-    "id": "barba_taglio",
-    "name": "Taglio + Barba",
+  "manicure": {
+    "id": "manicure",
+    "name": "Manicure",
     "durationMin": 45,
-    "price": 15,
+    "price": 20,
+    "active": true
+  },
+  "pedicure": {
+    "id": "pedicure",
+    "name": "Pedicure",
+    "durationMin": 60,
+    "price": 30,
+    "active": true
+  },
+  "pulizia_viso": {
+    "id": "pulizia_viso",
+    "name": "Pulizia viso",
+    "durationMin": 60,
+    "price": 35,
+    "active": true
+  },
+  "ceretta_gambe": {
+    "id": "ceretta_gambe",
+    "name": "Ceretta gambe",
+    "durationMin": 45,
+    "price": 25,
+    "active": true
+  },
+  "massaggio_relax": {
+    "id": "massaggio_relax",
+    "name": "Massaggio relax",
+    "durationMin": 60,
+    "price": 40,
     "active": true
   }
 }

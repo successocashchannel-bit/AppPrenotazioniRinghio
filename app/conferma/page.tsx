@@ -11,7 +11,6 @@ function parseDateTime(date: string, time: string) {
   if (!date || !time) return null;
   const [year, month, day] = date.split("-").map(Number);
   const [hour, minute] = time.split(":").map(Number);
-
   if (
     !Number.isFinite(year) ||
     !Number.isFinite(month) ||
@@ -21,7 +20,6 @@ function parseDateTime(date: string, time: string) {
   ) {
     return null;
   }
-
   return { year, month, day, hour, minute };
 }
 
@@ -70,18 +68,20 @@ function buildGoogleCalendarUrl(args: {
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-export default async function Page({ searchParams }: { searchParams: any }) {
+export default function Page({ searchParams }: { searchParams: any }) {
   const service = searchParams?.service || "";
+  const collaborator = searchParams?.collaborator || "";
   const date = searchParams?.date || "";
   const time = searchParams?.time || "";
   const name = searchParams?.name || "";
   const durationMin = Number(searchParams?.durationMin || 0) || 30;
 
-  const calendarTitle = `${service || "Appuntamento"} - Ringhio BarberShop`;
+  const calendarTitle = `${service || "Appuntamento"} - Prenotazioni Online`;
   const calendarDescription = [
     "Promemoria appuntamento",
     name ? `Cliente: ${name}` : "",
     service ? `Servizio: ${service}` : "",
+    collaborator ? `Collaboratori: ${collaborator}` : "",
     date ? `Data: ${formatDateIT(date)}` : "",
     time ? `Ora: ${time}` : "",
   ]
@@ -100,15 +100,6 @@ export default async function Page({ searchParams }: { searchParams: any }) {
     <main className="container">
       <section className="card" style={{ maxWidth: 560, margin: "40px auto" }}>
         <div className="grid" style={{ textAlign: "center", gap: 18 }}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/logo-ringhio.png"
-            width={120}
-            height={120}
-            style={{ width: 120, height: 120, objectFit: "contain", margin: "0 auto" }}
-            alt="Ringhio BarberShop"
-          />
-
           <div>
             <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>
               Prenotazione confermata
@@ -120,6 +111,7 @@ export default async function Page({ searchParams }: { searchParams: any }) {
 
           <div style={{ background: "#000", padding: 16, borderRadius: 12, textAlign: "left" }}>
             <div style={{ marginBottom: 8 }}><b>Servizio:</b> {service || "-"}</div>
+            <div style={{ marginBottom: 8 }}><b>Collaboratore/i:</b> {collaborator || "Assegnazione automatica"}</div>
             <div style={{ marginBottom: 8 }}><b>Data:</b> {formatDateIT(date || "") || "-"}</div>
             <div style={{ marginBottom: 8 }}><b>Ora:</b> {time || "-"}</div>
             <div><b>Durata:</b> {durationMin} min</div>

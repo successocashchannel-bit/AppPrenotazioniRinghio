@@ -1,0 +1,9 @@
+{
+  "collaboratore_1": {
+    "id": "collaboratore_1",
+    "name": "Operatore",
+    "active": true,
+    "calendarId": "",
+    "color": ""
+  }
+}
